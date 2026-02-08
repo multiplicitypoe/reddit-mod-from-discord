@@ -4,6 +4,7 @@ import asyncio
 import html
 import logging
 import time
+from typing import Protocol
 
 import praw
 from praw.models import Comment, Submission
@@ -14,6 +15,50 @@ from reddit_mod_from_discord.config import Settings, load_settings
 from reddit_mod_from_discord.models import ReportedItem
 
 logger = logging.getLogger("reddit_mod_from_discord")
+
+
+class RedditApi(Protocol):
+    async def fetch_reports(self) -> list[ReportedItem]: ...
+
+    async def approve_item(self, fullname: str) -> None: ...
+
+    async def remove_item(self, fullname: str, spam: bool, mod_note: str = "") -> None: ...
+
+    async def set_lock(self, fullname: str, locked: bool) -> None: ...
+
+    async def set_ignore_reports(self, fullname: str, ignored: bool) -> None: ...
+
+    async def refresh_state(self, fullname: str) -> dict[str, object]: ...
+
+    async def reply(self, fullname: str, body: str, sticky: bool, lock: bool) -> str | None: ...
+
+    async def ban_user(
+        self,
+        subreddit_name: str,
+        username: str,
+        duration_days: int | None,
+        ban_reason: str,
+        mod_note: str,
+        ban_message: str,
+    ) -> str | None: ...
+
+    async def send_modmail(
+        self,
+        subreddit_name: str,
+        recipient: str,
+        subject: str,
+        body: str,
+        author_hidden: bool,
+    ) -> str | None: ...
+
+    async def send_removal_message(
+        self,
+        fullname: str,
+        message_body: str,
+        message_title: str,
+        mod_note: str,
+        public_as_subreddit: bool,
+    ) -> None: ...
 
 
 def _squash_whitespace(text: str) -> str:
@@ -216,15 +261,6 @@ class RedditService:
     async def set_ignore_reports(self, fullname: str, ignored: bool) -> None:
         await self._run(self._set_ignore_reports_sync, fullname, ignored)
 
-    def _get_report_details_sync(self, fullname: str) -> tuple[list[str], list[str]]:
-        thing = self._thing_from_fullname(fullname)
-        user_reports = self._format_user_reports(getattr(thing, "user_reports", []))
-        mod_reports = self._format_mod_reports(getattr(thing, "mod_reports", []))
-        return user_reports, mod_reports
-
-    async def get_report_details(self, fullname: str) -> tuple[list[str], list[str]]:
-        return await self._run(self._get_report_details_sync, fullname)
-
     def _ban_user_sync(
         self,
         subreddit_name: str,
@@ -233,7 +269,7 @@ class RedditService:
         ban_reason: str,
         mod_note: str,
         ban_message: str,
-    ) -> None:
+    ) -> str | None:
         subreddit = self._reddit.subreddit(subreddit_name)
         kwargs: dict[str, object] = {}
         if duration_days is not None:
@@ -250,6 +286,7 @@ class RedditService:
         except TypeError:
             kwargs.pop("ban_message", None)
             subreddit.banned.add(username, **kwargs)
+        return f"https://www.reddit.com/r/{subreddit_name}/about/log/?type=banuser"
 
     async def ban_user(
         self,
@@ -259,8 +296,8 @@ class RedditService:
         ban_reason: str,
         mod_note: str,
         ban_message: str,
-    ) -> None:
-        await self._run(
+    ) -> str | None:
+        return await self._run(
             self._ban_user_sync,
             subreddit_name,
             username,
@@ -270,6 +307,29 @@ class RedditService:
             ban_message,
         )
 
+    @staticmethod
+    def _modmail_url_from_object(conversation: object) -> str | None:
+        conv_id: str | None = None
+
+        raw_id = getattr(conversation, "id", None)
+        if isinstance(raw_id, str) and raw_id:
+            conv_id = raw_id
+
+        if conv_id is None and isinstance(conversation, dict):
+            raw = conversation.get("id")
+            if isinstance(raw, str) and raw:
+                conv_id = raw
+            if conv_id is None:
+                nested = conversation.get("conversation")
+                if isinstance(nested, dict):
+                    raw_nested = nested.get("id")
+                    if isinstance(raw_nested, str) and raw_nested:
+                        conv_id = raw_nested
+
+        if not conv_id:
+            return None
+        return f"https://mod.reddit.com/mail/perma/{conv_id}"
+
     def _send_modmail_sync(
         self,
         subreddit_name: str,
@@ -277,14 +337,15 @@ class RedditService:
         subject: str,
         body: str,
         author_hidden: bool,
-    ) -> None:
+    ) -> str | None:
         subreddit = self._reddit.subreddit(subreddit_name)
-        subreddit.modmail.create(
+        conversation = subreddit.modmail.create(
             subject=subject.strip(),
             body=body.strip(),
             recipient=recipient.strip(),
             author_hidden=author_hidden,
         )
+        return self._modmail_url_from_object(conversation)
 
     async def send_modmail(
         self,
@@ -293,8 +354,8 @@ class RedditService:
         subject: str,
         body: str,
         author_hidden: bool,
-    ) -> None:
-        await self._run(
+    ) -> str | None:
+        return await self._run(
             self._send_modmail_sync,
             subreddit_name,
             recipient,
@@ -340,7 +401,7 @@ class RedditService:
             public_as_subreddit,
         )
 
-    def _reply_sync(self, fullname: str, body: str, sticky: bool, lock: bool) -> None:
+    def _reply_sync(self, fullname: str, body: str, sticky: bool, lock: bool) -> str | None:
         thing = self._thing_from_fullname(fullname)
         comment = thing.reply(body)
         try:
@@ -358,9 +419,13 @@ class RedditService:
                     thing.submission.mod.lock()
             except Exception:
                 pass
+        permalink = getattr(comment, "permalink", None)
+        if isinstance(permalink, str) and permalink:
+            return f"https://www.reddit.com{permalink}"
+        return None
 
-    async def reply(self, fullname: str, body: str, sticky: bool, lock: bool) -> None:
-        await self._run(self._reply_sync, fullname, body, sticky, lock)
+    async def reply(self, fullname: str, body: str, sticky: bool, lock: bool) -> str | None:
+        return await self._run(self._reply_sync, fullname, body, sticky, lock)
 
     def _refresh_state_sync(self, fullname: str) -> dict[str, object]:
         thing = self._thing_from_fullname(fullname)
@@ -390,6 +455,96 @@ class RedditService:
 
     async def test_auth(self) -> str:
         return await self._run(self._test_auth_sync)
+
+
+class DemoRedditService:
+    def __init__(self) -> None:
+        self._state: dict[str, dict[str, object]] = {}
+        self._reports: dict[str, tuple[list[str], list[str]]] = {}
+
+    def seed(
+        self,
+        fullname: str,
+        *,
+        num_reports: int = 1,
+        user_reports: list[str] | None = None,
+        mod_reports: list[str] | None = None,
+    ) -> None:
+        self._state.setdefault(
+            fullname,
+            {
+                "locked": False,
+                "reports_ignored": False,
+                "removed": False,
+                "approved": False,
+                "num_reports": num_reports,
+            },
+        )
+        if user_reports is None:
+            user_reports = ["Spam x1"]
+        if mod_reports is None:
+            mod_reports = []
+        self._reports[fullname] = (list(user_reports), list(mod_reports))
+
+    async def fetch_reports(self) -> list[ReportedItem]:
+        return []
+
+    async def approve_item(self, fullname: str) -> None:
+        state = self._state.setdefault(fullname, {})
+        state["approved"] = True
+        state["removed"] = False
+
+    async def remove_item(self, fullname: str, spam: bool, mod_note: str = "") -> None:
+        state = self._state.setdefault(fullname, {})
+        state["removed"] = True
+        state["approved"] = False
+
+    async def set_lock(self, fullname: str, locked: bool) -> None:
+        state = self._state.setdefault(fullname, {})
+        state["locked"] = locked
+
+    async def set_ignore_reports(self, fullname: str, ignored: bool) -> None:
+        state = self._state.setdefault(fullname, {})
+        state["reports_ignored"] = ignored
+
+    async def refresh_state(self, fullname: str) -> dict[str, object]:
+        return dict(self._state.get(fullname, {}))
+
+    async def reply(self, fullname: str, body: str, sticky: bool, lock: bool) -> str | None:
+        stamp = int(time.time())
+        return f"https://www.reddit.com/comments/demo/{stamp}"
+
+    async def ban_user(
+        self,
+        subreddit_name: str,
+        username: str,
+        duration_days: int | None,
+        ban_reason: str,
+        mod_note: str,
+        ban_message: str,
+    ) -> str | None:
+        return f"https://www.reddit.com/r/{subreddit_name}/about/log/?type=banuser"
+
+    async def send_modmail(
+        self,
+        subreddit_name: str,
+        recipient: str,
+        subject: str,
+        body: str,
+        author_hidden: bool,
+    ) -> str | None:
+        stamp = int(time.time())
+        return f"https://mod.reddit.com/mail/perma/demo-{stamp}"
+
+    async def send_removal_message(
+        self,
+        fullname: str,
+        message_body: str,
+        message_title: str,
+        mod_note: str,
+        public_as_subreddit: bool,
+    ) -> None:
+        return None
 
 
 def _main() -> None:

@@ -9,7 +9,7 @@ import discord
 
 from reddit_mod_from_discord.models import ReportViewPayload
 from reddit_mod_from_discord.permissions import is_allowed_moderator
-from reddit_mod_from_discord.reddit_client import RedditService
+from reddit_mod_from_discord.reddit_client import RedditApi
 from reddit_mod_from_discord.store import BotStore, ViewRecord
 
 logger = logging.getLogger("reddit_mod_from_discord")
@@ -26,6 +26,22 @@ def _format_timestamp(ts: float) -> str:
         return "unknown"
     dt = datetime.fromtimestamp(ts, tz=timezone.utc)
     return dt.strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _relative_age(ts: float) -> str:
+    if ts <= 0:
+        return "unknown"
+    delta = max(0, int(time.time() - ts))
+    if delta < 60:
+        return "just now"
+    if delta < 3600:
+        minutes = delta // 60
+        return f"{minutes}m ago"
+    if delta < 86400:
+        hours = delta // 3600
+        return f"{hours}h ago"
+    days = delta // 86400
+    return f"{days}d ago"
 
 
 def build_report_embed(payload: ReportViewPayload) -> discord.Embed:
@@ -68,25 +84,39 @@ def build_report_embed(payload: ReportViewPayload) -> discord.Embed:
     else:
         status_value = "active (not approved/removed)"
     embed.add_field(name="Status", value=status_value, inline=True)
+
+    report_lines: list[str] = []
+    if payload.user_reports:
+        report_lines.append("User reports:")
+        report_lines.extend([f"- {line}" for line in payload.user_reports[:6]])
+    if payload.mod_reports:
+        if report_lines:
+            report_lines.append("")
+        report_lines.append("Mod reports:")
+        report_lines.extend([f"- {line}" for line in payload.mod_reports[:6]])
+    if not report_lines:
+        report_lines = ["No report reason text returned by Reddit."]
+    embed.add_field(
+        name="Report reasons",
+        value=_truncate("\n".join(report_lines), 1024),
+        inline=False,
+    )
+
     if (
         payload.link_url
         and payload.link_url != payload.permalink
         and payload.link_url != payload.media_url
     ):
         embed.add_field(name="Link", value=_truncate(payload.link_url, 1024), inline=False)
-    if payload.user_reports or payload.mod_reports:
-        embed.add_field(
-            name="Report Details",
-            value="Use `More actions...` -> `View reports`",
-            inline=False,
-        )
     if payload.action_log:
         embed.add_field(
-            name="Actions",
+            name="Audit Log",
             value=_truncate("\n".join(f"- {line}" for line in payload.action_log[-10:]), 1024),
             inline=False,
         )
-    embed.set_footer(text=f"{payload.fullname} | Created {_format_timestamp(payload.created_utc)}")
+
+    if payload.created_utc > 0:
+        embed.set_footer(text=f"Posted {_relative_age(payload.created_utc)}")
     return embed
 
 
@@ -157,7 +187,7 @@ class BanModal(discord.ui.Modal, title="Ban User"):
             return
 
         try:
-            await self._view.reddit.ban_user(
+            modlog_url = await self._view.reddit.ban_user(
                 subreddit_name=self._view.payload.subreddit,
                 username=username,
                 duration_days=duration_days,
@@ -171,10 +201,14 @@ class BanModal(discord.ui.Modal, title="Ban User"):
             return
 
         duration_label = f"{duration_days}d" if duration_days else "permanent"
+        if modlog_url:
+            action_text = f"banned u/{username} ({duration_label}) ([mod log]({modlog_url}))"
+        else:
+            action_text = f"banned u/{username} ({duration_label})"
         await self._view.complete_modal_action(
             interaction,
             self._message_ref,
-            f"banned u/{username} ({duration_label})",
+            action_text,
         )
 
 
@@ -271,7 +305,7 @@ class ModmailModal(discord.ui.Modal, title="Send Modmail"):
             return
 
         try:
-            await self._view.reddit.send_modmail(
+            modmail_url = await self._view.reddit.send_modmail(
                 subreddit_name=self._view.payload.subreddit,
                 recipient=recipient,
                 subject=subject,
@@ -283,10 +317,15 @@ class ModmailModal(discord.ui.Modal, title="Send Modmail"):
             await interaction.followup.send(f"Modmail failed: {exc}", ephemeral=True)
             return
 
+        if modmail_url:
+            action_text = f"sent a [modmail]({modmail_url}) to u/{recipient}"
+        else:
+            action_text = f"sent a modmail to u/{recipient}"
+
         await self._view.complete_modal_action(
             interaction,
             self._message_ref,
-            f"sent modmail to u/{recipient}",
+            action_text,
         )
 
 
@@ -345,7 +384,7 @@ class ReplyModal(discord.ui.Modal, title="Reply"):
         try:
             if remove_first:
                 await self._view.reddit.remove_item(self._view.payload.fullname, spam=False)
-            await self._view.reddit.reply(
+            reply_url = await self._view.reddit.reply(
                 fullname=self._view.payload.fullname,
                 body=body,
                 sticky=sticky,
@@ -361,20 +400,22 @@ class ReplyModal(discord.ui.Modal, title="Reply"):
         sticky_label = "sticky" if sticky else "no-sticky"
         lock_label = " + locked" if lock else ""
         remove_label = "removed + replied" if remove_first else "replied"
+        if reply_url:
+            detail = f"[reply]({reply_url}), {sticky_label}{lock_label}"
+        else:
+            detail = f"{sticky_label}{lock_label}"
         await self._view.complete_modal_action(
             interaction,
             self._message_ref,
-            f"{remove_label} ({sticky_label}{lock_label})",
+            f"{remove_label} ({detail})",
         )
 
 
 class MoreActionsSelect(discord.ui.Select):
     def __init__(self) -> None:
         options = [
-            discord.SelectOption(label="View reports", value="view_reports"),
-            discord.SelectOption(label="Toggle ignore reports", value="toggle_ignore"),
             discord.SelectOption(label="Reply", value="reply"),
-            discord.SelectOption(label="Modmail (author hidden)", value="modmail"),
+            discord.SelectOption(label="Modmail", value="modmail"),
             discord.SelectOption(label="Ban user", value="ban"),
             discord.SelectOption(label="Refresh state", value="refresh"),
         ]
@@ -405,36 +446,6 @@ class MoreActionsSelect(discord.ui.Select):
         if selected == "ban":
             await interaction.response.send_modal(BanModal(view, ref, view.payload.author))
             return
-        if selected == "view_reports":
-            lines: list[str] = []
-            if view.payload.user_reports:
-                lines.append("User reports:")
-                lines.extend([f"- {line}" for line in view.payload.user_reports])
-            if view.payload.mod_reports:
-                lines.append("Mod reports:")
-                lines.extend([f"- {line}" for line in view.payload.mod_reports])
-            if not lines:
-                lines = ["No report details available on this alert."]
-            await interaction.response.send_message("\n".join(lines)[:1900], ephemeral=True)
-            return
-        if selected == "toggle_ignore":
-            await interaction.response.defer(ephemeral=True, thinking=True)
-            new_state = not view.payload.reports_ignored
-            verb = "ignored reports" if new_state else "unignored reports"
-            try:
-                await view.reddit.set_ignore_reports(view.payload.fullname, new_state)
-            except Exception as exc:
-                logger.exception("Toggle ignore reports failed")
-                await interaction.followup.send(f"Toggle failed: {exc}", ephemeral=True)
-                return
-            view._append_action(interaction, verb)
-            try:
-                await view._refresh_state()
-            except Exception:
-                logger.exception("Failed to refresh state after toggle")
-            await view._apply_message_update(interaction, ref)
-            await interaction.followup.send(f"Done: {verb}", ephemeral=True)
-            return
         if selected == "modmail":
             await interaction.response.send_modal(ModmailModal(view, ref, view.payload.author))
             return
@@ -461,14 +472,17 @@ class ReportView(discord.ui.View):
         self,
         payload: ReportViewPayload,
         store: BotStore,
-        reddit: RedditService,
+        reddit: RedditApi,
         allowed_role_ids: set[int],
+        *,
+        demo_mode: bool = False,
     ) -> None:
         super().__init__(timeout=None)
         self.payload = payload
         self.store = store
         self.reddit = reddit
         self.allowed_role_ids = allowed_role_ids
+        self.demo_mode = demo_mode
         self.add_item(
             discord.ui.Button(
                 label="Open on Reddit",
@@ -560,6 +574,8 @@ class ReportView(discord.ui.View):
         actor = user.display_name if isinstance(user, discord.Member) else str(user)
         stamp = datetime.now(tz=timezone.utc).strftime("%H:%M UTC")
         self.payload.action_log.append(f"{stamp} - {actor}: {action_text}")
+        if self.demo_mode:
+            logger.info("[demo] %s %s", self.payload.fullname, action_text)
 
     async def _refresh_state(self) -> None:
         state = await self.reddit.refresh_state(self.payload.fullname)
@@ -715,6 +731,13 @@ class ReportView(discord.ui.View):
         ref = self._message_ref_from_interaction(interaction)
         if ref is None:
             await interaction.response.send_message("Message context unavailable.", ephemeral=True)
+            return
+
+        if self.demo_mode:
+            self._append_action(interaction, "marked handled (demo)")
+            await interaction.response.defer(ephemeral=True, thinking=False)
+            await self._apply_message_update(interaction, ref)
+            await interaction.followup.send("Logged (demo).", ephemeral=True)
             return
 
         self.payload.handled = True

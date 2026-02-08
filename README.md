@@ -44,6 +44,9 @@ Required:
 Defaults already set in `.env.example`:
 
 - `DISCORD_ALLOWED_ROLE_IDS=1221785711922122792,604756836847059015`
+- `DISCORD_SILENT_NOTIFICATIONS=true`
+
+Note: `DISCORD_ALLOWED_ROLE_IDS` are server-specific. If you move the bot to a new Discord server, you must update this list to the new server's role IDs.
 - `REDDIT_SUBREDDIT=codelyoko`
 - `POLL_INTERVAL_MINUTES=5`
 - `POST_REPORT_THRESHOLD=1`

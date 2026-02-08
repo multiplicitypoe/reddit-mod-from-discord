@@ -9,6 +9,11 @@ class Settings:
     discord_token: str
     discord_mod_channel_id: int
     discord_allowed_role_ids: tuple[int, ...]
+    discord_silent_notifications: bool
+
+    demo_mode: bool
+    demo_post_url: str
+
     reddit_client_id: str
     reddit_client_secret: str
     reddit_refresh_token: str | None
@@ -73,23 +78,37 @@ def load_settings() -> Settings:
     )
     role_ids = _parse_role_ids(role_ids_raw)
 
+    demo_mode = _env_bool("DEMO_MODE", False)
+    demo_post_url = _env(
+        "DEMO_POST_URL",
+        "https://old.reddit.com/r/CodeLyoko/comments/1qufcnu/code_lyoko_chatgpt/",
+    )
+
     reddit_refresh_token = _env_optional("REDDIT_REFRESH_TOKEN")
     reddit_username = _env_optional("REDDIT_USERNAME")
     reddit_password = _env_optional("REDDIT_PASSWORD")
     reddit_redirect_uri = _env("REDDIT_REDIRECT_URI", "http://localhost:8080")
 
-    if not reddit_refresh_token:
-        if not (reddit_username and reddit_password):
-            raise ValueError(
-                "Set REDDIT_REFRESH_TOKEN, or set both REDDIT_USERNAME and REDDIT_PASSWORD"
-            )
+    if not demo_mode:
+        if not reddit_refresh_token:
+            if not (reddit_username and reddit_password):
+                raise ValueError(
+                    "Set REDDIT_REFRESH_TOKEN, or set both REDDIT_USERNAME and REDDIT_PASSWORD"
+                )
 
     return Settings(
         discord_token=_required("DISCORD_TOKEN"),
         discord_mod_channel_id=_env_int("DISCORD_MOD_CHANNEL_ID", 604768963741876255),
         discord_allowed_role_ids=role_ids,
-        reddit_client_id=_required("REDDIT_CLIENT_ID"),
-        reddit_client_secret=_required("REDDIT_CLIENT_SECRET"),
+        discord_silent_notifications=_env_bool("DISCORD_SILENT_NOTIFICATIONS", True),
+
+        demo_mode=demo_mode,
+        demo_post_url=demo_post_url,
+
+        reddit_client_id=_env("REDDIT_CLIENT_ID", "") if demo_mode else _required("REDDIT_CLIENT_ID"),
+        reddit_client_secret=_env("REDDIT_CLIENT_SECRET", "")
+        if demo_mode
+        else _required("REDDIT_CLIENT_SECRET"),
         reddit_refresh_token=reddit_refresh_token or None,
         reddit_username=reddit_username or None,
         reddit_password=reddit_password or None,
