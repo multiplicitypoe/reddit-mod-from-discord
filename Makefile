@@ -1,4 +1,4 @@
-.PHONY: ensure-venv install run-bot test-reddit test-discord test-discord-post test-discord-comment reddit-token help
+.PHONY: ensure-venv install run-bot demo-mode test-reddit test-discord test-discord-post test-discord-comment reddit-token help
 
 VENV ?= .venv
 PYTHON ?= python3
@@ -9,6 +9,7 @@ help:
 	@echo "make ensure-venv - create .venv if missing"
 	@echo "make install     - install runtime deps"
 	@echo "make run-bot     - run the Discord bot with .env"
+	@echo "make demo-mode   - run bot in safe demo mode"
 	@echo "make test-reddit - validate Reddit auth/config"
 	@echo "make test-discord - send a test alert (post)"
 	@echo "make test-discord-post - send a test post alert"
@@ -24,6 +25,10 @@ install: ensure-venv
 run-bot: install
 	@test -f ./.env || (echo "Missing .env. Run: cp .env.example .env" && exit 1)
 	PYTHONPATH=src "$(PY)" -m reddit_mod_from_discord
+
+demo-mode: install
+	@test -f ./.env || (echo "Missing .env. Run: cp .env.example .env" && exit 1)
+	DEMO_MODE=true DB_PATH=data/reddit_mod_from_discord_demo.sqlite3 PYTHONPATH=src "$(PY)" -m reddit_mod_from_discord
 
 test-reddit: install
 	@test -f ./.env || (echo "Missing .env. Run: cp .env.example .env" && exit 1)

@@ -121,6 +121,43 @@ class BotStore:
             return False
         return False
 
+    async def get_view(self, message_id: int) -> ViewRecord | None:
+        conn = self._require_conn()
+        cursor = await conn.execute(
+            "SELECT message_id, channel_id, guild_id, payload_json, created_at FROM alert_views WHERE message_id = ?",
+            (message_id,),
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        if row is None:
+            return None
+        return ViewRecord(
+            message_id=row["message_id"],
+            channel_id=row["channel_id"],
+            guild_id=row["guild_id"],
+            payload=json.loads(row["payload_json"]),
+            created_at=row["created_at"],
+        )
+
+    async def list_unhandled_alerts(self, limit: int = 50) -> list[tuple[str, int, int]]:
+        conn = self._require_conn()
+        cursor = await conn.execute(
+            """
+            SELECT fullname, discord_channel_id, discord_message_id
+            FROM reported_items
+            WHERE handled = 0 AND discord_message_id IS NOT NULL AND discord_channel_id IS NOT NULL
+            ORDER BY last_seen_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        await cursor.close()
+        out: list[tuple[str, int, int]] = []
+        for row in rows:
+            out.append((row["fullname"], int(row["discord_channel_id"]), int(row["discord_message_id"])))
+        return out
+
     async def set_discord_message(self, fullname: str, channel_id: int, message_id: int) -> None:
         conn = self._require_conn()
         await conn.execute(
@@ -132,6 +169,37 @@ class BotStore:
             (channel_id, message_id, fullname),
         )
         await conn.commit()
+
+    async def clear_discord_message(self, fullname: str) -> None:
+        conn = self._require_conn()
+        await conn.execute(
+            """
+            UPDATE reported_items
+            SET discord_channel_id = NULL, discord_message_id = NULL
+            WHERE fullname = ?
+            """,
+            (fullname,),
+        )
+        await conn.commit()
+
+    async def get_alert_message(self, fullname: str) -> tuple[int | None, int | None, bool]:
+        conn = self._require_conn()
+        cursor = await conn.execute(
+            "SELECT discord_channel_id, discord_message_id, handled FROM reported_items WHERE fullname = ?",
+            (fullname,),
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        if row is None:
+            return None, None, False
+        channel_id = row["discord_channel_id"]
+        message_id = row["discord_message_id"]
+        handled = bool(row["handled"])
+        return (
+            int(channel_id) if channel_id is not None else None,
+            int(message_id) if message_id is not None else None,
+            handled,
+        )
 
     async def mark_handled(self, fullname: str) -> None:
         conn = self._require_conn()

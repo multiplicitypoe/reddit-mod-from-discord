@@ -269,7 +269,7 @@ class TestDiscordBot(discord.Client):
                     embed=build_report_embed(payload),
                     view=view,
                     allowed_mentions=discord.AllowedMentions.none(),
-                    silent=True,
+                    silent=settings.discord_silent_notifications,
                 )
 
                 await store_obj.save_view(
