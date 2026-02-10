@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+import re
 import time
 from typing import Protocol
 
@@ -95,12 +96,23 @@ class RedditService:
             )
         self._lock = asyncio.Lock()
 
+    @staticmethod
+    def _validate_thing_id(thing_id: str) -> str:
+        thing_id = thing_id.strip()
+        if not thing_id:
+            raise ValueError("Missing thing id")
+        # Reddit thing IDs are base36; in practice they're lowercase but accept uppercase defensively.
+        if re.fullmatch(r"[0-9a-zA-Z]+", thing_id) is None:
+            raise ValueError(f"Invalid thing id: {thing_id!r}")
+        return thing_id.lower()
+
     async def _run(self, fn, *args):
         async with self._lock:
             return await asyncio.to_thread(fn, *args)
 
     def _thing_from_fullname(self, fullname: str) -> Comment | Submission:
         prefix, _, thing_id = fullname.partition("_")
+        thing_id = self._validate_thing_id(thing_id)
         if prefix == "t1":
             return self._reddit.comment(thing_id)
         if prefix == "t3":

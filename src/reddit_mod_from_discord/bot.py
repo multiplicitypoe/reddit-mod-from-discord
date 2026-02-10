@@ -66,7 +66,7 @@ class RedditModBot(discord.Client):
             return
 
         # Always post a fresh demo message on startup.
-        demo_fullname = f"t3_demo_{int(time.time())}"
+        demo_fullname = f"demo-{int(time.time())}"
         now = time.time()
 
         fetched = await self._fetch_demo_submission(self.settings.demo_post_url)
@@ -433,6 +433,15 @@ class RedditModBot(discord.Client):
                 continue
             try:
                 state = await self.reddit.refresh_state(fullname)
+            except ValueError:
+                # Most commonly: stale demo/test rows in the DB (e.g. t3_demo_...) or corrupted entries.
+                # Mark handled to avoid repeatedly re-processing an invalid identifier.
+                logger.warning("Invalid Reddit fullname in DB; marking handled: %s", fullname)
+                try:
+                    await self.store.mark_handled(fullname)
+                except Exception:
+                    pass
+                continue
             except Exception:
                 continue
             try:
@@ -583,32 +592,19 @@ class RedditModBot(discord.Client):
         await self.store.prune_views(ttl_s=self.settings.view_store_ttl_hours * 3600)
         records = await self.store.load_views()
         restored = 0
+        deleted = 0
+        skipped = 0
         for record in records:
-            channel = self.get_channel(record.channel_id)
-            if not isinstance(channel, (discord.TextChannel, discord.Thread)):
-                try:
-                    fetched = await self.fetch_channel(record.channel_id)
-                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                    fetched = None
-                channel = fetched if isinstance(fetched, (discord.TextChannel, discord.Thread)) else None
-            if not isinstance(channel, (discord.TextChannel, discord.Thread)):
-                await self.store.delete_view(record.message_id)
-                continue
-
-            try:
-                message = await channel.fetch_message(record.message_id)
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                await self.store.delete_view(record.message_id)
-                continue
-
             try:
                 payload = ReportViewPayload.from_dict(record.payload)
             except Exception:
                 await self.store.delete_view(record.message_id)
+                deleted += 1
                 continue
 
             if not payload.fullname:
                 await self.store.delete_view(record.message_id)
+                deleted += 1
                 continue
 
             view = ReportView(
@@ -621,18 +617,16 @@ class RedditModBot(discord.Client):
             try:
                 self.add_view(view, message_id=record.message_id)
             except ValueError:
-                await self.store.delete_view(record.message_id)
+                skipped += 1
                 continue
-
-            # Best-effort: update components to match current layout.
-            try:
-                await message.edit(view=view)
-            except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-                pass
             restored += 1
 
         if restored:
             logger.info("Restored %s persistent alert view(s)", restored)
+        if deleted:
+            logger.info("Deleted %s invalid alert view record(s)", deleted)
+        if skipped:
+            logger.debug("Skipped %s already-registered persistent view(s)", skipped)
 
 
 def main() -> None:
