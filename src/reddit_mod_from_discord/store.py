@@ -143,10 +143,15 @@ class BotStore:
         conn = self._require_conn()
         cursor = await conn.execute(
             """
-            SELECT fullname, discord_channel_id, discord_message_id
-            FROM reported_items
-            WHERE handled = 0 AND discord_message_id IS NOT NULL AND discord_channel_id IS NOT NULL
-            ORDER BY last_seen_at DESC
+            SELECT ri.fullname, ri.discord_channel_id, ri.discord_message_id
+            FROM reported_items AS ri
+            INNER JOIN alert_views AS av
+                ON av.message_id = ri.discord_message_id
+            WHERE
+                ri.handled = 0
+                AND ri.discord_message_id IS NOT NULL
+                AND ri.discord_channel_id IS NOT NULL
+            ORDER BY ri.last_seen_at DESC
             LIMIT ?
             """,
             (limit,),
