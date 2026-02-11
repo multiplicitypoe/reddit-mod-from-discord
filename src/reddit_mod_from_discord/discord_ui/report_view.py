@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ast
 import logging
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -43,6 +45,67 @@ def _relative_age(ts: float) -> str:
     days = delta // 86400
     return f"{days}d ago"
 
+_REPORT_COUNT_RE = re.compile(r"^(?P<reason>.*) x(?P<count>\\d+)$")
+
+
+def _normalize_report_lines(lines: list[str]) -> list[str]:
+    out: list[str] = []
+    for line in lines:
+        text = str(line).strip()
+        if not text:
+            continue
+        if text.startswith(("[", "(")) and text.endswith(("]", ")")):
+            try:
+                parsed = ast.literal_eval(text)
+            except Exception:
+                parsed = None
+            if isinstance(parsed, (list, tuple)) and len(parsed) >= 2:
+                reason = str(parsed[0]).strip() or "Unknown reason"
+                try:
+                    count = int(parsed[1])
+                except Exception:
+                    count = 1
+                if count < 0:
+                    count = 0
+                out.append(f"{reason} x{count}")
+                continue
+        out.append(text)
+    return out
+
+
+def _sum_report_counts(lines: list[str]) -> int:
+    total = 0
+    for line in lines:
+        m = _REPORT_COUNT_RE.match(line.strip())
+        if not m:
+            continue
+        try:
+            total += int(m.group("count"))
+        except Exception:
+            continue
+    return total
+
+
+def _aggregate_reports(lines: list[str]) -> list[str]:
+    counts: dict[str, int] = {}
+    for line in _normalize_report_lines(lines):
+        m = _REPORT_COUNT_RE.match(line.strip())
+        if m:
+            reason = m.group("reason").strip() or "Unknown reason"
+            try:
+                count = int(m.group("count"))
+            except Exception:
+                count = 1
+        else:
+            reason = line.strip()
+            count = 1
+        if count < 0:
+            count = 0
+        counts[reason] = counts.get(reason, 0) + count
+
+    items = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0].lower()))
+    return [f"{reason} x{count}" for reason, count in items if reason]
+
 
 def build_report_embed(payload: ReportViewPayload) -> discord.Embed:
     thing_label = "Post" if payload.kind == "submission" else "Comment"
@@ -52,10 +115,11 @@ def build_report_embed(payload: ReportViewPayload) -> discord.Embed:
         color = discord.Color.red()
     else:
         color = discord.Color.blurple()
-    title = f"Reported {thing_label} in r/{payload.subreddit}"
+    author = payload.author or "[deleted]"
+    title = f"Reported {thing_label} in /r/{payload.subreddit} by {author}"
     embed = discord.Embed(title=_truncate(title, 256), color=color, url=payload.permalink)
     summary = payload.title if payload.title else thing_label
-    description = f"**{_truncate(summary, 300)}**"
+    description = f"**Title:** {_truncate(summary, 300)}"
     if payload.snippet:
         description += f"\n{_truncate(payload.snippet, 900)}"
     embed.description = description
@@ -77,23 +141,19 @@ def build_report_embed(payload: ReportViewPayload) -> discord.Embed:
     if payload.handled:
         status.append("handled")
 
-    embed.add_field(name="Author", value=payload.author or "[deleted]", inline=True)
-    embed.add_field(name="Reports", value=str(payload.num_reports), inline=True)
+    user_reports = _normalize_report_lines(payload.user_reports)
+    mod_reports = _normalize_report_lines(payload.mod_reports)
+
     if status:
         status_value = ", ".join(status)
     else:
         status_value = "active (not approved/removed)"
-    embed.add_field(name="Status", value=status_value, inline=True)
+    embed.add_field(name="Status", value=status_value, inline=False)
 
+    all_reports = _aggregate_reports(user_reports + mod_reports)
     report_lines: list[str] = []
-    if payload.user_reports:
-        report_lines.append("User reports:")
-        report_lines.extend([f"- {line}" for line in payload.user_reports[:6]])
-    if payload.mod_reports:
-        if report_lines:
-            report_lines.append("")
-        report_lines.append("Mod reports:")
-        report_lines.extend([f"- {line}" for line in payload.mod_reports[:6]])
+    if all_reports:
+        report_lines.extend([f"- {line}" for line in all_reports[:10]])
     if not report_lines:
         report_lines = ["No report reason text returned by Reddit."]
     embed.add_field(

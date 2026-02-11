@@ -87,9 +87,13 @@ def _build_reported_submission_from_url_sync(settings, url: str) -> ReportedItem
             return []
         out: list[str] = []
         for entry in raw:
-            if isinstance(entry, (tuple, list)) and len(entry) == 2:
+            if isinstance(entry, (tuple, list)) and len(entry) >= 2:
                 reason, count = entry[0], entry[1]
-                out.append(f"{str(reason)} x{count}")
+                try:
+                    count_int = int(count)
+                except Exception:
+                    count_int = 1
+                out.append(f"{str(reason)} x{count_int}")
             else:
                 out.append(str(entry))
         return out
@@ -168,9 +172,13 @@ def _build_reported_comment_sync(settings) -> ReportedItem:
             return []
         out: list[str] = []
         for entry in raw:
-            if isinstance(entry, (tuple, list)) and len(entry) == 2:
+            if isinstance(entry, (tuple, list)) and len(entry) >= 2:
                 reason, count = entry[0], entry[1]
-                out.append(f"{str(reason)} x{count}")
+                try:
+                    count_int = int(count)
+                except Exception:
+                    count_int = 1
+                out.append(f"{str(reason)} x{count_int}")
             else:
                 out.append(str(entry))
         return out

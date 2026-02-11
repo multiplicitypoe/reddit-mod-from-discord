@@ -106,6 +106,34 @@ class RedditService:
             raise ValueError(f"Invalid thing id: {thing_id!r}")
         return thing_id.lower()
 
+    @staticmethod
+    def _parse_reports(raw_reports: object) -> tuple[list[str], int]:
+        if not isinstance(raw_reports, list):
+            return [], 0
+        lines: list[str] = []
+        total = 0
+        for entry in raw_reports:
+            if isinstance(entry, (tuple, list)) and len(entry) >= 2:
+                reason_raw = entry[0]
+                count_raw = entry[1]
+                reason = str(reason_raw).strip() or "Unknown reason"
+                try:
+                    count = int(count_raw)
+                except Exception:
+                    count = 1
+                if count < 0:
+                    count = 0
+                lines.append(f"{reason} x{count}")
+                total += count
+                continue
+
+            text = str(entry).strip()
+            if not text:
+                continue
+            lines.append(text)
+            total += 1
+        return lines, total
+
     async def _run(self, fn, *args):
         async with self._lock:
             return await asyncio.to_thread(fn, *args)
@@ -121,20 +149,13 @@ class RedditService:
 
     @staticmethod
     def _format_user_reports(raw_reports: object) -> list[str]:
-        if not isinstance(raw_reports, list):
-            return []
-        out: list[str] = []
-        for entry in raw_reports:
-            if isinstance(entry, (tuple, list)) and len(entry) == 2:
-                reason, count = entry[0], entry[1]
-                out.append(f"{reason} x{count}")
-                continue
-            out.append(str(entry))
-        return out
+        lines, _ = RedditService._parse_reports(raw_reports)
+        return lines
 
     @staticmethod
     def _format_mod_reports(raw_reports: object) -> list[str]:
-        return RedditService._format_user_reports(raw_reports)
+        lines, _ = RedditService._parse_reports(raw_reports)
+        return lines
 
     @staticmethod
     def _looks_like_image_url(url: str) -> bool:
@@ -203,6 +224,12 @@ class RedditService:
                 prefix = "t1" if kind == "comment" else "t3"
                 fullname = f"{prefix}_{thing.id}"
 
+            user_reports, user_total = self._parse_reports(getattr(thing, "user_reports", []))
+            mod_reports, mod_total = self._parse_reports(getattr(thing, "mod_reports", []))
+            computed_total = user_total + mod_total
+            if (num_reports <= 0 or num_reports < computed_total) and computed_total > 0:
+                num_reports = computed_total
+
             items.append(
                 ReportedItem(
                     fullname=fullname,
@@ -224,8 +251,8 @@ class RedditService:
                         or getattr(thing, "banned_by", None)
                     ),
                     approved=bool(getattr(thing, "approved_by", None)),
-                    user_reports=self._format_user_reports(getattr(thing, "user_reports", [])),
-                    mod_reports=self._format_mod_reports(getattr(thing, "mod_reports", [])),
+                    user_reports=user_reports,
+                    mod_reports=mod_reports,
                 )
             )
 
@@ -443,6 +470,10 @@ class RedditService:
         thing = self._thing_from_fullname(fullname)
         # Accessing attrs triggers lazy refresh for these fields in PRAW.
         _ = thing.id
+        try:
+            raw_num_reports = int(getattr(thing, "num_reports", 0) or 0)
+        except Exception:
+            raw_num_reports = 0
         return {
             "locked": bool(getattr(thing, "locked", False)),
             "reports_ignored": bool(getattr(thing, "ignore_reports", False)),
@@ -451,7 +482,7 @@ class RedditService:
                 or getattr(thing, "banned_by", None)
             ),
             "approved": bool(getattr(thing, "approved_by", None)),
-            "num_reports": int(getattr(thing, "num_reports", 0) or 0),
+            "num_reports": max(0, raw_num_reports),
         }
 
     async def refresh_state(self, fullname: str) -> dict[str, object]:
