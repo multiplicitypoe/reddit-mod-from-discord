@@ -538,7 +538,7 @@ class RedditModBot(discord.Client):
                 changed = True
             raw = refreshed_state.get("num_reports")
             if isinstance(raw, (int, float)) and payload.num_reports != int(raw):
-                payload.num_reports = int(raw)
+                payload.num_reports = max(0, int(raw))
                 changed = True
 
         if not changed:
