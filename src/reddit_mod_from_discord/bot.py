@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 from reddit_mod_from_discord.config import Settings, load_settings
 from reddit_mod_from_discord.discord_ui.report_view import ReportView, build_report_embed
+from reddit_mod_from_discord.logging_filters import install_discord_reconnect_log_compaction
 from reddit_mod_from_discord.models import ReportViewPayload, ReportedItem
 from reddit_mod_from_discord.permissions import is_allowed_moderator
 from reddit_mod_from_discord.reddit_client import DemoRedditService, RedditService
@@ -633,6 +634,7 @@ def main() -> None:
     load_dotenv()
     settings = load_settings()
     logging.basicConfig(level=logging.DEBUG if settings.debug_logs else logging.INFO)
+    install_discord_reconnect_log_compaction()
     bot = RedditModBot(settings)
     bot.run(settings.discord_token)
 
