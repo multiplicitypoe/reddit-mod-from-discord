@@ -1,0 +1,18 @@
+services:
+  bot:
+    image: reddit-mod-from-discord:latest
+    build: .
+    container_name: reddit-mod-from-discord
+    env_file: .env
+    user: "${UID:-1000}:${GID:-1000}"
+    volumes:
+      - ./data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    init: true
+    restart: unless-stopped

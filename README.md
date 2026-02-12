@@ -31,6 +31,32 @@ cp .env.example .env
 make run-bot
 ```
 
+## Docker
+
+Build the image (default tag is `latest`):
+
+```bash
+make build-docker
+```
+
+Run the container in the foreground (this checks for an existing `reddit-mod-from-discord` container, stops/removes it if present, then starts a fresh one):
+
+```bash
+make run-docker
+```
+
+Useful extras:
+
+```bash
+make stop-docker   # stop/remove named container only
+make docker        # build image, then run container
+```
+
+Notes:
+- The image name/tag defaults to `reddit-mod-from-discord:latest`. Override with `make build-docker TAG=...`.
+- Data persists in host `data/` via `-v ./data:/app/data`.
+- `make run-docker` runs attached; press `Ctrl+C` to stop.
+
 ## Environment variables
 
 Required:
@@ -40,14 +66,14 @@ Required:
 - `REDDIT_CLIENT_ID`
 - `REDDIT_CLIENT_SECRET`
 - `REDDIT_REFRESH_TOKEN`
+- `DISCORD_ALLOWED_ROLE_IDS`
 
 Defaults already set in `.env.example`:
 
-- `DISCORD_ALLOWED_ROLE_IDS=1221785711922122792,604756836847059015`
 - `DISCORD_SILENT_NOTIFICATIONS=true`
 
 Note: `DISCORD_ALLOWED_ROLE_IDS` are server-specific. If you move the bot to a new Discord server, you must update this list to the new server's role IDs.
-- `REDDIT_SUBREDDIT=codelyoko`
+- `REDDIT_SUBREDDIT=`
 - `POLL_INTERVAL_MINUTES=5`
 - `POST_REPORT_THRESHOLD=1`
 - `COMMENT_REPORT_THRESHOLD=1`
@@ -69,6 +95,8 @@ Actions run as the Reddit account that authorized the refresh token. If you want
 If your account cannot create apps yet: Reddit now requires you to register for API access before creating credentials. See:
 
 - https://www.reddit.com/r/reddit.com/wiki/api/
+
+Run the token helper on the host machine (not inside the bot container) because it listens for the OAuth callback on local `http://localhost:8080` by default.
 
 1) Create a Reddit app as a **web app** with redirect URI `http://localhost:8080`.
 2) Put `REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET` into `.env`.
