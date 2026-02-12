@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 
 from reddit_mod_from_discord.config import Settings, load_settings
 from reddit_mod_from_discord.models import ReportedItem
+from reddit_mod_from_discord.safety import sanitize_http_url
 
 logger = logging.getLogger("reddit_mod_from_discord")
 
@@ -166,13 +167,13 @@ class RedditService:
 
     @classmethod
     def _extract_submission_media(cls, submission: Submission) -> tuple[str | None, str | None, str | None]:
-        link_url = str(getattr(submission, "url", "") or "")
-        link_url = link_url.strip() or None
+        raw_link_url = str(getattr(submission, "url", "") or "")
+        link_url = sanitize_http_url(raw_link_url)
 
         thumbnail_url: str | None = None
         raw_thumb = getattr(submission, "thumbnail", None)
-        if isinstance(raw_thumb, str) and raw_thumb.startswith("http"):
-            thumbnail_url = raw_thumb
+        if isinstance(raw_thumb, str):
+            thumbnail_url = sanitize_http_url(raw_thumb)
 
         media_url: str | None = None
         preview = getattr(submission, "preview", None)
@@ -183,7 +184,7 @@ class RedditService:
                 if isinstance(source, dict):
                     url = source.get("url")
                     if isinstance(url, str) and url:
-                        media_url = html.unescape(url)
+                        media_url = sanitize_http_url(html.unescape(url))
 
         if media_url is None and link_url and cls._looks_like_image_url(link_url):
             media_url = link_url
@@ -216,7 +217,8 @@ class RedditService:
 
             author_obj = getattr(thing, "author", None)
             author = getattr(author_obj, "name", "[deleted]") if author_obj else "[deleted]"
-            permalink = f"https://www.reddit.com{getattr(thing, 'permalink', '')}"
+            raw_permalink = f"https://www.reddit.com{getattr(thing, 'permalink', '')}"
+            permalink = sanitize_http_url(raw_permalink) or f"https://www.reddit.com/r/{self.settings.reddit_subreddit}/"
             created_utc = float(getattr(thing, "created_utc", time.time()))
             num_reports = int(getattr(thing, "num_reports", 0) or 0)
             fullname = str(getattr(thing, "name", ""))
@@ -460,7 +462,7 @@ class RedditService:
                 pass
         permalink = getattr(comment, "permalink", None)
         if isinstance(permalink, str) and permalink:
-            return f"https://www.reddit.com{permalink}"
+            return sanitize_http_url(f"https://www.reddit.com{permalink}")
         return None
 
     async def reply(self, fullname: str, body: str, sticky: bool, lock: bool) -> str | None:
