@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import logging
 import re
 import time
@@ -12,6 +11,7 @@ import discord
 from reddit_mod_from_discord.models import ReportViewPayload
 from reddit_mod_from_discord.permissions import is_allowed_moderator
 from reddit_mod_from_discord.reddit_client import RedditApi
+from reddit_mod_from_discord.safety import sanitize_http_url
 from reddit_mod_from_discord.store import BotStore, ViewRecord
 
 logger = logging.getLogger("reddit_mod_from_discord")
@@ -45,7 +45,15 @@ def _relative_age(ts: float) -> str:
     days = delta // 86400
     return f"{days}d ago"
 
-_REPORT_COUNT_RE = re.compile(r"^(?P<reason>.*) x(?P<count>\\d+)$")
+_REPORT_COUNT_RE = re.compile(r"^(?P<reason>.*) x(?P<count>\d+)$")
+_LEGACY_REPORT_LINE_RE = re.compile(
+    r"""^\s*[\[(]\s*['"]?(?P<reason>.+?)['"]?\s*,\s*(?P<count>-?\d+)\s*[\])]\s*$"""
+)
+
+
+def _escape_discord_text(text: str) -> str:
+    escaped = discord.utils.escape_markdown(str(text))
+    return discord.utils.escape_mentions(escaped)
 
 
 def _normalize_report_lines(lines: list[str]) -> list[str]:
@@ -54,21 +62,17 @@ def _normalize_report_lines(lines: list[str]) -> list[str]:
         text = str(line).strip()
         if not text:
             continue
-        if text.startswith(("[", "(")) and text.endswith(("]", ")")):
+        legacy = _LEGACY_REPORT_LINE_RE.match(text)
+        if legacy is not None:
+            reason = legacy.group("reason").strip().strip("'\"") or "Unknown reason"
             try:
-                parsed = ast.literal_eval(text)
+                count = int(legacy.group("count"))
             except Exception:
-                parsed = None
-            if isinstance(parsed, (list, tuple)) and len(parsed) >= 2:
-                reason = str(parsed[0]).strip() or "Unknown reason"
-                try:
-                    count = int(parsed[1])
-                except Exception:
-                    count = 1
-                if count < 0:
-                    count = 0
-                out.append(f"{reason} x{count}")
-                continue
+                count = 1
+            if count < 0:
+                count = 0
+            out.append(f"{reason} x{count}")
+            continue
         out.append(text)
     return out
 
@@ -104,7 +108,7 @@ def _aggregate_reports(lines: list[str]) -> list[str]:
         counts[reason] = counts.get(reason, 0) + count
 
     items = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0].lower()))
-    return [f"{reason} x{count}" for reason, count in items if reason]
+    return [f"{_escape_discord_text(reason)} x{count}" for reason, count in items if reason]
 
 
 def build_report_embed(payload: ReportViewPayload) -> discord.Embed:
@@ -115,19 +119,25 @@ def build_report_embed(payload: ReportViewPayload) -> discord.Embed:
         color = discord.Color.red()
     else:
         color = discord.Color.blurple()
-    author = payload.author or "[deleted]"
-    title = f"Reported {thing_label} in /r/{payload.subreddit} by {author}"
-    embed = discord.Embed(title=_truncate(title, 256), color=color, url=payload.permalink)
-    summary = payload.title if payload.title else thing_label
+    safe_permalink = sanitize_http_url(payload.permalink)
+    safe_media_url = sanitize_http_url(payload.media_url)
+    safe_thumbnail_url = sanitize_http_url(payload.thumbnail_url)
+    safe_link_url = sanitize_http_url(payload.link_url)
+
+    subreddit = _escape_discord_text(payload.subreddit)
+    author = _escape_discord_text(payload.author or "[deleted]")
+    title = f"Reported {thing_label} in /r/{subreddit} by {author}"
+    embed = discord.Embed(title=_truncate(title, 256), color=color, url=safe_permalink)
+    summary = _escape_discord_text(payload.title if payload.title else thing_label)
     description = f"**Title:** {_truncate(summary, 300)}"
     if payload.snippet:
-        description += f"\n{_truncate(payload.snippet, 900)}"
+        description += f"\n{_truncate(_escape_discord_text(payload.snippet), 900)}"
     embed.description = description
 
-    if payload.media_url:
-        embed.set_image(url=payload.media_url)
-    elif payload.thumbnail_url:
-        embed.set_thumbnail(url=payload.thumbnail_url)
+    if safe_media_url:
+        embed.set_image(url=safe_media_url)
+    elif safe_thumbnail_url:
+        embed.set_thumbnail(url=safe_thumbnail_url)
 
     status: list[str] = []
     if payload.approved:
@@ -163,15 +173,16 @@ def build_report_embed(payload: ReportViewPayload) -> discord.Embed:
     )
 
     if (
-        payload.link_url
-        and payload.link_url != payload.permalink
-        and payload.link_url != payload.media_url
+        safe_link_url
+        and safe_link_url != safe_permalink
+        and safe_link_url != safe_media_url
     ):
-        embed.add_field(name="Link", value=_truncate(payload.link_url, 1024), inline=False)
+        embed.add_field(name="Link", value=_truncate(safe_link_url, 1024), inline=False)
     if payload.action_log:
+        escaped_audit = [_escape_discord_text(line) for line in payload.action_log[-10:]]
         embed.add_field(
             name="Audit Log",
-            value=_truncate("\n".join(f"- {line}" for line in payload.action_log[-10:]), 1024),
+            value=_truncate("\n".join(f"- {line}" for line in escaped_audit), 1024),
             inline=False,
         )
 

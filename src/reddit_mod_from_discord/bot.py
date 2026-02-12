@@ -14,6 +14,7 @@ from reddit_mod_from_discord.logging_filters import install_discord_reconnect_lo
 from reddit_mod_from_discord.models import ReportViewPayload, ReportedItem
 from reddit_mod_from_discord.permissions import is_allowed_moderator
 from reddit_mod_from_discord.reddit_client import DemoRedditService, RedditService
+from reddit_mod_from_discord.safety import sanitize_http_url
 from reddit_mod_from_discord.store import BotStore, ViewRecord
 
 logger = logging.getLogger("reddit_mod_from_discord")
@@ -214,14 +215,14 @@ class RedditModBot(discord.Client):
 
             author_obj = getattr(submission, "author", None)
             author = getattr(author_obj, "name", "[deleted]") if author_obj else "[deleted]"
-            permalink = f"https://www.reddit.com{submission.permalink}"
-            link_url = str(getattr(submission, "url", "") or "").strip() or None
+            permalink = sanitize_http_url(f"https://www.reddit.com{submission.permalink}") or url
+            link_url = sanitize_http_url(str(getattr(submission, "url", "") or ""))
             snippet = submission.selftext or link_url or ""
 
             thumbnail_url = None
             raw_thumb = getattr(submission, "thumbnail", None)
-            if isinstance(raw_thumb, str) and raw_thumb.startswith("http"):
-                thumbnail_url = raw_thumb
+            if isinstance(raw_thumb, str):
+                thumbnail_url = sanitize_http_url(raw_thumb)
 
             media_url = None
             preview = getattr(submission, "preview", None)
@@ -232,13 +233,13 @@ class RedditModBot(discord.Client):
                     if isinstance(source, dict):
                         u = source.get("url")
                         if isinstance(u, str) and u:
-                            media_url = html.unescape(u)
+                            media_url = sanitize_http_url(html.unescape(u))
             if media_url is None and link_url:
                 lowered = link_url.lower()
                 if "i.redd.it/" in lowered or lowered.endswith(
                     (".png", ".jpg", ".jpeg", ".gif", ".webp")
                 ):
-                    media_url = link_url
+                    media_url = sanitize_http_url(link_url)
 
             return {
                 "title": str(getattr(submission, "title", "") or ""),
@@ -578,7 +579,18 @@ class RedditModBot(discord.Client):
             allowed_role_ids=self.allowed_role_ids,
             demo_mode=self.settings.demo_mode,
         )
-        await message.edit(embed=build_report_embed(payload), view=view)
+        try:
+            await message.edit(embed=build_report_embed(payload), view=view)
+        except discord.NotFound:
+            try:
+                await self.store.clear_discord_message(fullname)
+                await self.store.delete_view(message_id)
+            except Exception:
+                pass
+            return
+        except (discord.Forbidden, discord.HTTPException):
+            logger.exception("Failed to edit alert message %s", message_id)
+            return
         await self.store.save_view(
             ViewRecord(
                 message_id=message_id,
