@@ -16,6 +16,9 @@ from reddit_mod_from_discord.store import BotStore, ViewRecord
 
 logger = logging.getLogger("reddit_mod_from_discord")
 
+_BAN_REASON_API_MAX = 100
+_BAN_NOTE_API_MAX = 300
+
 
 def _truncate(text: str, max_len: int) -> str:
     if len(text) <= max_len:
@@ -49,6 +52,7 @@ _REPORT_COUNT_RE = re.compile(r"^(?P<reason>.*) x(?P<count>\d+)$")
 _LEGACY_REPORT_LINE_RE = re.compile(
     r"""^\s*[\[(]\s*['"]?(?P<reason>.+?)['"]?\s*,\s*(?P<count>-?\d+)\s*[\])]\s*$"""
 )
+_MARKDOWN_LINK_RE = re.compile(r"\[(?P<label>[^\]]+)\]\((?P<url>[^)]+)\)")
 
 
 def _escape_discord_text(text: str) -> str:
@@ -75,6 +79,31 @@ def _normalize_report_lines(lines: list[str]) -> list[str]:
             continue
         out.append(text)
     return out
+
+
+def _format_audit_log_line(text: str) -> str:
+    # Preserve explicit markdown links while escaping everything else.
+    source = str(text)
+    parts: list[str] = []
+    cursor = 0
+    for match in _MARKDOWN_LINK_RE.finditer(source):
+        start, end = match.span()
+        if start > cursor:
+            parts.append(_escape_discord_text(source[cursor:start]))
+
+        raw_label = match.group("label")
+        raw_url = match.group("url")
+        safe_url = sanitize_http_url(raw_url)
+        if safe_url:
+            safe_label = _escape_discord_text(raw_label)
+            parts.append(f"[{safe_label}]({safe_url})")
+        else:
+            parts.append(_escape_discord_text(source[start:end]))
+        cursor = end
+
+    if cursor < len(source):
+        parts.append(_escape_discord_text(source[cursor:]))
+    return "".join(parts)
 
 
 def _sum_report_counts(lines: list[str]) -> int:
@@ -179,7 +208,7 @@ def build_report_embed(payload: ReportViewPayload) -> discord.Embed:
     ):
         embed.add_field(name="Link", value=_truncate(safe_link_url, 1024), inline=False)
     if payload.action_log:
-        escaped_audit = [_escape_discord_text(line) for line in payload.action_log[-10:]]
+        escaped_audit = [_format_audit_log_line(line) for line in payload.action_log[-10:]]
         embed.add_field(
             name="Audit Log",
             value=_truncate("\n".join(f"- {line}" for line in escaped_audit), 1024),
@@ -212,12 +241,7 @@ class BanModal(discord.ui.Modal, title="Ban User"):
         max_length=3,
     )
     ban_reason = discord.ui.TextInput(
-        label="Ban reason",
-        required=False,
-        max_length=100,
-    )
-    mod_note = discord.ui.TextInput(
-        label="Mod note",
+        label="Ban Reason (not sent to user)",
         required=False,
         max_length=300,
     )
@@ -258,12 +282,13 @@ class BanModal(discord.ui.Modal, title="Ban User"):
             return
 
         try:
+            reason = str(self.ban_reason.value or "").strip()
             modlog_url = await self._view.reddit.ban_user(
                 subreddit_name=self._view.payload.subreddit,
                 username=username,
                 duration_days=duration_days,
-                ban_reason=str(self.ban_reason.value or "").strip(),
-                mod_note=str(self.mod_note.value or "").strip(),
+                ban_reason=reason[:_BAN_REASON_API_MAX],
+                mod_note=reason[:_BAN_NOTE_API_MAX],
                 ban_message=str(self.ban_message.value or "").strip(),
             )
         except Exception as exc:
