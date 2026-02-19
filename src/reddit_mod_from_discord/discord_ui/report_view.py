@@ -174,28 +174,25 @@ def build_report_embed(payload: ReportViewPayload) -> discord.Embed:
     else:
         status_value = "active (not approved/removed)"
 
-    detail_parts = [f"Status: {status_value}"]
+    detail_parts = [f"**Status:** {status_value}"]
     if payload.kind == "submission" and payload.num_comments is not None:
-        detail_parts.append(f"Comments: {payload.num_comments}")
+        detail_parts.append(f"**Comments:** {payload.num_comments}")
     if (
         safe_link_url
         and safe_link_url != safe_permalink
         and safe_link_url != safe_media_url
     ):
-        detail_parts.append(f"Link: {safe_link_url}")
+        detail_parts.append(f"**Link:** {safe_link_url}")
 
-    description_lines = [f"**Title:** {_truncate(summary, 800)}"]
+    description_lines = [f"**Title:** {_truncate(summary, 300)}"]
     if detail_parts:
         description_lines.append(_truncate(" | ".join(detail_parts), 400))
     if payload.snippet:
-        description_lines.append(_truncate(_escape_discord_text(payload.snippet), 900))
-
-    if len(description_lines) >= 3:
-        embed.description = "\n".join(description_lines[:2]) + "\n\n" + "\n".join(
-            description_lines[2:]
+        description_lines.append(
+            f"**Excerpt:** {_truncate(_escape_discord_text(payload.snippet), 900)}"
         )
-    else:
-        embed.description = "\n".join(description_lines)
+
+    embed.description = "\n".join(description_lines)
 
     if safe_media_url:
         embed.set_image(url=safe_media_url)
