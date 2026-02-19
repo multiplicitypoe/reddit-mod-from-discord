@@ -533,7 +533,7 @@ class RedditService:
         extra = ""
         if details:
             extra = f" ({details})"
-        return f"modlog: {action_name} by u/{mod_name} at {stamp}{extra}"
+        return f"{stamp} - u/{mod_name}: {action_name} [modlog]{extra}"
 
     def _resolve_bot_username(self) -> str | None:
         if self._bot_username is not None:
