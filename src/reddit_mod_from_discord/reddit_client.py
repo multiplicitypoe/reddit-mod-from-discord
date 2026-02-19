@@ -225,6 +225,7 @@ class RedditService:
             link_url: str | None = None
             media_url: str | None = None
             thumbnail_url: str | None = None
+            num_comments: int | None = None
             if isinstance(thing, Comment):
                 kind = "comment"
                 title = getattr(thing, "link_title", "Comment") or "Comment"
@@ -235,6 +236,10 @@ class RedditService:
                 title = getattr(thing, "title", "Submission") or "Submission"
                 body = getattr(thing, "selftext", "") or ""
                 link_url, media_url, thumbnail_url = self._extract_submission_media(thing)
+                try:
+                    num_comments = int(getattr(thing, "num_comments", 0) or 0)
+                except Exception:
+                    num_comments = 0
                 if not body:
                     body = link_url or ""
                 snippet = body
@@ -272,6 +277,7 @@ class RedditService:
                     snippet=_truncate(_squash_whitespace(snippet), 800),
                     num_reports=num_reports,
                     created_utc=created_utc,
+                    num_comments=num_comments,
                     locked=bool(getattr(thing, "locked", False)),
                     reports_ignored=bool(getattr(thing, "ignore_reports", False)),
                     removed=bool(
@@ -502,7 +508,7 @@ class RedditService:
             raw_num_reports = int(getattr(thing, "num_reports", 0) or 0)
         except Exception:
             raw_num_reports = 0
-        return {
+        state = {
             "locked": bool(getattr(thing, "locked", False)),
             "reports_ignored": bool(getattr(thing, "ignore_reports", False)),
             "removed": bool(
@@ -512,6 +518,10 @@ class RedditService:
             "approved": bool(getattr(thing, "approved_by", None)),
             "num_reports": max(0, raw_num_reports),
         }
+        raw_num_comments = getattr(thing, "num_comments", None)
+        if isinstance(raw_num_comments, (int, float)):
+            state["num_comments"] = max(0, int(raw_num_comments))
+        return state
 
     async def refresh_state(self, fullname: str) -> dict[str, object]:
         return await self._run(self._refresh_state_sync, fullname)
@@ -633,6 +643,7 @@ class DemoRedditService:
                 "removed": False,
                 "approved": False,
                 "num_reports": num_reports,
+                "num_comments": 0,
             },
         )
         if user_reports is None:
