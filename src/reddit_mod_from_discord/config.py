@@ -376,7 +376,7 @@ def load_settings() -> Settings:
     demo_mode = _env_bool("DEMO_MODE", False)
     demo_post_url = _env(
         "DEMO_POST_URL",
-        "https://old.reddit.com/r/CodeLyoko/comments/1qufcnu/code_lyoko_chatgpt/",
+        "https://old.reddit.com/r/example/comments/1qufcnu/code_lyoko_chatgpt/",
     )
 
     reddit_client_id = _env_optional("REDDIT_CLIENT_ID")
@@ -398,7 +398,7 @@ def load_settings() -> Settings:
 
     multi_server_config = _load_multi_server_config(multi_server_config_path)
 
-    reddit_subreddit_default = "codelyoko"
+    reddit_subreddit_default = "add_a_subreddit_here_or_this_wont_work"
     if multi_server_config_path:
         reddit_subreddit_default = ""
     reddit_subreddit = _env("REDDIT_SUBREDDIT", reddit_subreddit_default) or None

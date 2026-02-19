@@ -4,7 +4,7 @@
 
 - [x] Language/runtime: Python with pip + `requirements.txt` workflow.
 - [x] Single-server setup (no multi-server config required).
-- [x] Target subreddit default: `codelyoko` (overridable via `.env`).
+- [x] Target subreddit default: `example` (overridable via `.env`).
 - [x] Discord alert destination default channel id: `604768963741876255`.
 - [x] Polling model (no streaming): default every 5 minutes.
 - [x] Trigger: reported posts/comments at threshold (default 1 for both).

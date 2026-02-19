@@ -145,7 +145,7 @@ Example JSON:
 
 ```json
 {
-  "codelyoko": {
+  "example": {
     "discord_guild_id": 123456789012345678,
     "discord_mod_channel_id": 111111111111111111,
     "discord_allowed_role_ids": [222222222222222222, 333333333333333333],
