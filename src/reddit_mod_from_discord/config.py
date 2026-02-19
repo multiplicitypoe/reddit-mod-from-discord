@@ -398,7 +398,7 @@ def load_settings() -> Settings:
 
     multi_server_config = _load_multi_server_config(multi_server_config_path)
 
-    reddit_subreddit_default = "example"
+    reddit_subreddit_default = "add_a_subreddit_here_or_this_wont_work"
     if multi_server_config_path:
         reddit_subreddit_default = ""
     reddit_subreddit = _env("REDDIT_SUBREDDIT", reddit_subreddit_default) or None
