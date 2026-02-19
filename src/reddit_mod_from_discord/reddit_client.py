@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+import os
 import re
 import time
 from typing import Protocol
@@ -12,7 +13,7 @@ from praw.models import Comment, Submission
 
 from dotenv import load_dotenv
 
-from reddit_mod_from_discord.config import Settings, load_settings
+from reddit_mod_from_discord.config import ResolvedSettings, Settings, load_settings, resolve_settings
 from reddit_mod_from_discord.models import ReportedItem
 from reddit_mod_from_discord.safety import sanitize_http_url
 
@@ -73,9 +74,24 @@ def _truncate(text: str, max_len: int) -> str:
     return text[: max(0, max_len - 3)] + "..."
 
 
+class RedditSettings(Protocol):
+    reddit_client_id: str | None
+    reddit_client_secret: str | None
+    reddit_refresh_token: str | None
+    reddit_username: str | None
+    reddit_password: str | None
+    reddit_user_agent: str
+    reddit_subreddit: str | None
+    max_reports_per_poll: int
+
+
 class RedditService:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: RedditSettings) -> None:
         self.settings = settings
+        if not settings.reddit_client_id or not settings.reddit_client_secret:
+            raise ValueError("Missing Reddit app credentials")
+        if not settings.reddit_subreddit:
+            raise ValueError("Missing Reddit subreddit")
         if settings.reddit_refresh_token:
             self._reddit = praw.Reddit(
                 client_id=settings.reddit_client_id,
@@ -596,7 +612,23 @@ def _main() -> None:
     load_dotenv()
     logging.basicConfig(level=logging.INFO)
     settings = load_settings()
-    service = RedditService(settings)
+    setup_id = (os.getenv("TEST_SETUP_ID") or "").strip()
+    if settings.multi_server_config:
+        if setup_id:
+            setup = settings.multi_server_config.get(setup_id)
+            if setup is None:
+                raise RuntimeError(f"Unknown TEST_SETUP_ID: {setup_id}")
+        else:
+            if len(settings.multi_server_config) != 1:
+                raise RuntimeError(
+                    "TEST_SETUP_ID is required when MULTI_SERVER_CONFIG_PATH has multiple setups"
+                )
+            setup = next(iter(settings.multi_server_config.values()))
+            setup_id = setup.setup_id
+        resolved = resolve_settings(settings, setup.overrides)
+    else:
+        resolved = resolve_settings(settings, None)
+    service = RedditService(resolved)
 
     async def run_test() -> None:
         message = await service.test_auth()
