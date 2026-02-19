@@ -169,8 +169,10 @@ class RedditService:
             result = await asyncio.to_thread(fn, *args, **kwargs)
             exec_s = time.monotonic() - exec_start
         total_s = time.monotonic() - start
+        fn_name = getattr(fn, "__name__", "unknown")
+        if fn_name == "_fetch_reports_sync":
+            return result
         if total_s >= 5 or waited_s >= 5 or exec_s >= 5:
-            fn_name = getattr(fn, "__name__", "unknown")
             logger.info(
                 "Reddit API slow call %s wait=%.2fs exec=%.2fs total=%.2fs subreddit=r/%s",
                 fn_name,
