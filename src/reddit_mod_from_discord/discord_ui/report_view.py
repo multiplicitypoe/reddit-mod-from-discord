@@ -188,7 +188,7 @@ def build_report_embed(payload: ReportViewPayload) -> discord.Embed:
 
     if payload.snippet:
         description_lines.append(
-            f"**Excerpt:** {_truncate(_escape_discord_text(payload.snippet), 900)}"
+            f"**Text:** {_truncate(_escape_discord_text(payload.snippet), 900)}"
         )
 
     embed.description = "\n".join(description_lines)
