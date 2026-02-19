@@ -67,6 +67,22 @@ class BotStore:
                 payload_json TEXT NOT NULL,
                 created_at REAL NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS modlog_entries (
+                setup_id TEXT NOT NULL,
+                fullname TEXT NOT NULL,
+                created_utc REAL NOT NULL,
+                line TEXT NOT NULL,
+                PRIMARY KEY (setup_id, fullname, created_utc, line)
+            );
+
+            CREATE INDEX IF NOT EXISTS modlog_entries_lookup
+            ON modlog_entries (setup_id, fullname, created_utc);
+
+            CREATE TABLE IF NOT EXISTS modlog_state (
+                setup_id TEXT PRIMARY KEY,
+                last_seen_utc REAL NOT NULL
+            );
             """
         )
         await conn.commit()
@@ -384,4 +400,86 @@ class BotStore:
         cutoff = time.time() - ttl_s
         conn = self._require_conn()
         await conn.execute("DELETE FROM alert_views WHERE created_at < ?", (cutoff,))
+        await conn.commit()
+
+    async def get_modlog_state(self, setup_id: str) -> float | None:
+        conn = self._require_conn()
+        cursor = await conn.execute(
+            "SELECT last_seen_utc FROM modlog_state WHERE setup_id = ?",
+            (setup_id,),
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        if row is None:
+            return None
+        return float(row["last_seen_utc"])
+
+    async def update_modlog_state(self, setup_id: str, last_seen_utc: float) -> None:
+        conn = self._require_conn()
+        await conn.execute(
+            """
+            INSERT INTO modlog_state (setup_id, last_seen_utc)
+            VALUES (?, ?)
+            ON CONFLICT(setup_id) DO UPDATE SET last_seen_utc = excluded.last_seen_utc
+            """,
+            (setup_id, float(last_seen_utc)),
+        )
+        await conn.commit()
+
+    async def save_modlog_entries(
+        self, setup_id: str, entries: list[tuple[str, float, str]]
+    ) -> None:
+        if not entries:
+            return
+        conn = self._require_conn()
+        await conn.executemany(
+            """
+            INSERT OR IGNORE INTO modlog_entries (setup_id, fullname, created_utc, line)
+            VALUES (?, ?, ?, ?)
+            """,
+            [(setup_id, fullname, created_utc, line) for fullname, created_utc, line in entries],
+        )
+        await conn.commit()
+
+    async def list_modlog_entries(
+        self,
+        setup_id: str,
+        fullname: str,
+        *,
+        max_age_s: float | None = None,
+        limit: int = 50,
+    ) -> list[str]:
+        conn = self._require_conn()
+        params: list[object] = [setup_id, fullname]
+        where = "setup_id = ? AND fullname = ?"
+        if max_age_s is not None:
+            cutoff = time.time() - max_age_s
+            where += " AND created_utc >= ?"
+            params.append(cutoff)
+        params.append(limit)
+        cursor = await conn.execute(
+            f"""
+            SELECT line
+            FROM modlog_entries
+            WHERE {where}
+            ORDER BY created_utc DESC
+            LIMIT ?
+            """,
+            tuple(params),
+        )
+        rows = await cursor.fetchall()
+        await cursor.close()
+        lines = [str(row["line"]) for row in rows]
+        lines.reverse()
+        return lines
+
+    async def prune_modlog_entries(self, setup_id: str, max_age_s: float) -> None:
+        if max_age_s <= 0:
+            return
+        cutoff = time.time() - max_age_s
+        conn = self._require_conn()
+        await conn.execute(
+            "DELETE FROM modlog_entries WHERE setup_id = ? AND created_utc < ?",
+            (setup_id, cutoff),
+        )
         await conn.commit()
