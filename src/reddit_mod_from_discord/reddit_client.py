@@ -121,6 +121,7 @@ class RedditService:
                 user_agent=settings.reddit_user_agent,
             )
         self._lock = asyncio.Lock()
+        self._bot_username: str | None = None
 
     @staticmethod
     def _validate_thing_id(thing_id: str) -> str:
@@ -534,6 +535,24 @@ class RedditService:
             extra = f" ({details})"
         return f"modlog: {action_name} by u/{mod_name} at {stamp}{extra}"
 
+    def _resolve_bot_username(self) -> str | None:
+        if self._bot_username is not None:
+            return self._bot_username or None
+        try:
+            me = self._reddit.user.me()
+        except Exception:
+            self._bot_username = ""
+            return None
+        if me is None:
+            self._bot_username = ""
+            return None
+        name = getattr(me, "name", None)
+        if not name:
+            self._bot_username = ""
+            return None
+        self._bot_username = str(name)
+        return self._bot_username
+
     def _fetch_recent_modlog_entries_sync(
         self,
         subreddit_name: str,
@@ -542,6 +561,8 @@ class RedditService:
         min_created_utc: float | None = None,
     ) -> list[tuple[str, float, str]]:
         subreddit = self._reddit.subreddit(subreddit_name)
+        bot_username = self._resolve_bot_username()
+        bot_username_norm = bot_username.lower() if bot_username else None
         entries: list[tuple[str, float, str]] = []
         for action in subreddit.mod.log(limit=limit):
             created_raw = getattr(action, "created_utc", None)
@@ -551,6 +572,11 @@ class RedditService:
                 created_utc = 0.0
             if min_created_utc is not None and created_utc and created_utc < min_created_utc:
                 break
+            if bot_username_norm:
+                mod = getattr(action, "mod", None)
+                mod_name = getattr(mod, "name", None) or (str(mod) if mod is not None else "")
+                if mod_name and mod_name.lower() == bot_username_norm:
+                    continue
             target_fullname = getattr(action, "target_fullname", None)
             if not isinstance(target_fullname, str) or not target_fullname:
                 continue
