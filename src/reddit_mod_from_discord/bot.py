@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass
 
 import discord
+import prawcore
 from discord import app_commands
 from dotenv import load_dotenv
 
@@ -30,6 +31,7 @@ class SetupRuntime:
     allowed_role_ids: set[int]
     poll_task: asyncio.Task[None] | None
     poll_lock: asyncio.Lock
+    modlog_disabled: bool = False
 
 
 class RedditModBot(discord.Client):
@@ -421,6 +423,8 @@ class RedditModBot(discord.Client):
     async def _refresh_modlog_cache(self, runtime: SetupRuntime) -> None:
         if self.settings.demo_mode:
             return
+        if runtime.modlog_disabled:
+            return
         if runtime.settings.modlog_fetch_limit <= 0:
             return
         if not runtime.settings.reddit_subreddit:
@@ -442,6 +446,12 @@ class RedditModBot(discord.Client):
                     runtime.setup_id,
                     runtime.settings.modlog_max_age_days * 86400,
                 )
+        except prawcore.exceptions.InsufficientScope:
+            runtime.modlog_disabled = True
+            logger.warning(
+                "Modlog scopes missing for setup %s; disabling modlog cache",
+                runtime.setup_id,
+            )
         except Exception:
             logger.exception("Failed to refresh modlog cache for %s", runtime.setup_id)
 
@@ -494,7 +504,7 @@ class RedditModBot(discord.Client):
                     await self._update_existing_alert(guild, runtime, report)
                     continue
 
-                if runtime.settings.modlog_fetch_limit > 0:
+                if runtime.settings.modlog_fetch_limit > 0 and not runtime.modlog_disabled:
                     try:
                         max_age_s = (
                             runtime.settings.modlog_max_age_days * 86400
