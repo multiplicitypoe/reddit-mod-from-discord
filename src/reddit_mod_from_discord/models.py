@@ -51,9 +51,12 @@ class ReportViewPayload:
     handled: bool = False
     action_log: list[str] = field(default_factory=list)
     view_version: int = 1
+    setup_id: str | None = None
 
     @classmethod
-    def from_reported_item(cls, item: ReportedItem) -> "ReportViewPayload":
+    def from_reported_item(
+        cls, item: ReportedItem, *, setup_id: str | None = None
+    ) -> "ReportViewPayload":
         return cls(
             fullname=item.fullname,
             kind=item.kind,
@@ -73,6 +76,7 @@ class ReportViewPayload:
             approved=item.approved,
             user_reports=list(item.user_reports),
             mod_reports=list(item.mod_reports),
+            setup_id=setup_id,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -98,6 +102,7 @@ class ReportViewPayload:
             "mod_reports": self.mod_reports,
             "handled": self.handled,
             "action_log": self.action_log,
+            "setup_id": self.setup_id,
         }
 
     @classmethod
@@ -114,6 +119,9 @@ class ReportViewPayload:
         action_log = payload.get("action_log")
         if not isinstance(action_log, list):
             action_log = []
+        setup_id = payload.get("setup_id")
+        if setup_id is not None and not isinstance(setup_id, str):
+            setup_id = str(setup_id)
 
         link_url = payload.get("link_url")
         if not isinstance(link_url, str) or not link_url.strip():
@@ -147,4 +155,5 @@ class ReportViewPayload:
             mod_reports=[str(value) for value in mod_reports],
             handled=bool(payload.get("handled", False)),
             action_log=[str(value) for value in action_log],
+            setup_id=setup_id,
         )

@@ -7,7 +7,7 @@ import time
 import discord
 from dotenv import load_dotenv
 
-from reddit_mod_from_discord.config import load_settings
+from reddit_mod_from_discord.config import ResolvedSettings, load_settings, resolve_settings
 from reddit_mod_from_discord.discord_ui.report_view import ReportView, build_report_embed
 from reddit_mod_from_discord.models import ReportViewPayload, ReportedItem
 from reddit_mod_from_discord.reddit_client import RedditService
@@ -35,7 +35,9 @@ def _env_float(name: str, default: float) -> float:
     return float(raw)
 
 
-def _build_reported_submission_from_url_sync(settings, url: str) -> ReportedItem:
+def _build_reported_submission_from_url_sync(
+    settings: ResolvedSettings, url: str
+) -> ReportedItem:
     import praw
     import html
     from urllib.parse import urlparse
@@ -146,7 +148,7 @@ def _build_reported_submission_from_url_sync(settings, url: str) -> ReportedItem
     )
 
 
-def _build_reported_comment_sync(settings) -> ReportedItem:
+def _build_reported_comment_sync(settings: ResolvedSettings) -> ReportedItem:
     import praw
 
     if settings.reddit_refresh_token:
@@ -223,13 +225,63 @@ def _build_reported_comment_sync(settings) -> ReportedItem:
     )
 
 
+def _resolve_test_settings(settings) -> tuple[ResolvedSettings, int, str]:
+    setup_id = (os.getenv("TEST_SETUP_ID") or "").strip()
+    if settings.multi_server_config:
+        if setup_id:
+            setup = settings.multi_server_config.get(setup_id)
+            if setup is None:
+                raise SystemExit(f"Unknown TEST_SETUP_ID: {setup_id}")
+        else:
+            if len(settings.multi_server_config) != 1:
+                raise SystemExit(
+                    "TEST_SETUP_ID is required when MULTI_SERVER_CONFIG_PATH has multiple setups"
+                )
+            setup = next(iter(settings.multi_server_config.values()))
+            setup_id = setup.setup_id
+        resolved = resolve_settings(settings, setup.overrides)
+        guild_id = setup.guild_id
+    else:
+        guild_id_raw = os.getenv("TEST_GUILD_ID")
+        guild_id = int(guild_id_raw) if guild_id_raw else 0
+        resolved = resolve_settings(settings, None)
+        setup_id = setup_id or str(guild_id or 0)
+
+    if resolved.discord_mod_channel_id is None:
+        raise SystemExit("DISCORD_MOD_CHANNEL_ID is required for test")
+    if resolved.discord_allowed_role_ids is None:
+        raise SystemExit("DISCORD_ALLOWED_ROLE_IDS is required for test")
+    if not resolved.reddit_client_id or not resolved.reddit_client_secret:
+        raise SystemExit("REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET are required for test")
+    if not resolved.reddit_subreddit:
+        raise SystemExit("REDDIT_SUBREDDIT is required for test")
+    if not resolved.reddit_refresh_token and not (resolved.reddit_username and resolved.reddit_password):
+        raise SystemExit(
+            "Set REDDIT_REFRESH_TOKEN, or set both REDDIT_USERNAME and REDDIT_PASSWORD"
+        )
+    return resolved, guild_id, setup_id
+
+
 class TestDiscordBot(discord.Client):
-    def __init__(self, token: str, channel_id: int) -> None:
+    def __init__(
+        self,
+        *,
+        token: str,
+        channel_id: int,
+        settings,
+        resolved: ResolvedSettings,
+        guild_id: int,
+        setup_id: str,
+    ) -> None:
         intents = discord.Intents.default()
         intents.guilds = True
         super().__init__(intents=intents)
         self._token = token
         self._channel_id = channel_id
+        self._settings = settings
+        self._resolved = resolved
+        self._guild_id = guild_id
+        self._setup_id = setup_id
 
     async def on_ready(self) -> None:
         try:
@@ -247,26 +299,34 @@ class TestDiscordBot(discord.Client):
 
             store_to_close: BotStore | None = None
             try:
-                settings = load_settings()
-                store_obj = BotStore(settings.db_path)
+                store_obj = BotStore(self._settings.db_path)
                 store_to_close = store_obj
                 await store_obj.connect()
-                reddit = RedditService(settings)
+                reddit = RedditService(self._resolved)
 
                 kind = (os.getenv("TEST_KIND") or "submission").strip().lower()
                 if kind == "comment":
-                    reported = await asyncio.to_thread(_build_reported_comment_sync, settings)
+                    reported = await asyncio.to_thread(
+                        _build_reported_comment_sync, self._resolved
+                    )
                 else:
-                    url = os.getenv("TEST_REDDIT_URL") or f"https://www.reddit.com/r/{settings.reddit_subreddit}/"
-                    reported = await asyncio.to_thread(_build_reported_submission_from_url_sync, settings, url)
+                    url = os.getenv("TEST_REDDIT_URL") or (
+                        f"https://www.reddit.com/r/{self._resolved.reddit_subreddit}/"
+                    )
+                    reported = await asyncio.to_thread(
+                        _build_reported_submission_from_url_sync,
+                        self._resolved,
+                        url,
+                    )
                 payload = ReportViewPayload.from_reported_item(reported)
+                payload.setup_id = self._setup_id
                 payload.action_log.append("test: posted via make test-discord")
 
                 view = ReportView(
                     payload=payload,
                     store=store_obj,
                     reddit=reddit,
-                    allowed_role_ids=set(settings.discord_allowed_role_ids),
+                    allowed_role_ids=set(self._resolved.discord_allowed_role_ids or ()),
                 )
 
                 print(f"Sending full-feature test alert to #{channel.name} ({channel.id})")
@@ -277,14 +337,14 @@ class TestDiscordBot(discord.Client):
                     embed=build_report_embed(payload),
                     view=view,
                     allowed_mentions=discord.AllowedMentions.none(),
-                    silent=settings.discord_silent_notifications,
+                    silent=self._resolved.discord_silent_notifications,
                 )
 
                 await store_obj.save_view(
                     ViewRecord(
                         message_id=sent.id,
                         channel_id=sent.channel.id,
-                        guild_id=sent.guild.id if sent.guild else 0,
+                        guild_id=sent.guild.id if sent.guild else self._guild_id,
                         payload=payload.to_dict(),
                         created_at=time.time(),
                     )
@@ -312,9 +372,20 @@ class TestDiscordBot(discord.Client):
 
 def main() -> None:
     load_dotenv()
-    token = _env_required("DISCORD_TOKEN")
-    channel_id = _env_int("DISCORD_MOD_CHANNEL_ID", 604768963741876255)
-    bot = TestDiscordBot(token=token, channel_id=channel_id)
+    settings = load_settings()
+    resolved, guild_id, setup_id = _resolve_test_settings(settings)
+    token = settings.discord_token
+    channel_id = resolved.discord_mod_channel_id
+    if channel_id is None:
+        raise SystemExit("DISCORD_MOD_CHANNEL_ID is required")
+    bot = TestDiscordBot(
+        token=token,
+        channel_id=channel_id,
+        settings=settings,
+        resolved=resolved,
+        guild_id=guild_id,
+        setup_id=setup_id,
+    )
     bot.run_bot()
 
 

@@ -1,0 +1,31 @@
+{
+  "codelyoko": {
+    "discord_guild_id": 123456789012345678,
+    "discord_mod_channel_id": 111111111111111111,
+    "discord_allowed_role_ids": [222222222222222222, 333333333333333333],
+    "discord_silent_notifications": true,
+    "reddit_client_id": "app_client_id",
+    "reddit_client_secret": "app_client_secret",
+    "reddit_refresh_token": "refresh_token_here",
+    "reddit_user_agent": "reddit-mod-from-discord/0.1 by u/mod_account",
+    "reddit_subreddit": "example_subreddit",
+    "poll_interval_minutes": 5,
+    "post_report_threshold": 1,
+    "comment_report_threshold": 1,
+    "max_reports_per_poll": 100
+  },
+  "other_subreddit": {
+    "discord_guild_id": 987654321098765432,
+    "discord_mod_channel_id": 444444444444444444,
+    "discord_allowed_role_ids": [555555555555555555],
+    "reddit_client_id": "other_client_id",
+    "reddit_client_secret": "other_client_secret",
+    "reddit_refresh_token": "other_refresh_token",
+    "reddit_user_agent": "reddit-mod-from-discord/0.1 by u/other_mod_account",
+    "reddit_subreddit": "other_subreddit",
+    "poll_interval_minutes": 2,
+    "post_report_threshold": 2,
+    "comment_report_threshold": 2,
+    "max_reports_per_poll": 50
+  }
+}

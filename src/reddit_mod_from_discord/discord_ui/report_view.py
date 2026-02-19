@@ -701,8 +701,9 @@ class ReportView(discord.ui.View):
         except Exception:
             logger.exception("Failed to persist alert payload for message %s", ref.message_id)
         if self.payload.handled:
+            setup_id = self.payload.setup_id or str(ref.guild_id)
             try:
-                await self.store.mark_handled(self.payload.fullname)
+                await self.store.mark_handled(self.payload.fullname, setup_id)
             except Exception:
                 logger.exception("Failed to mark item handled: %s", self.payload.fullname)
 

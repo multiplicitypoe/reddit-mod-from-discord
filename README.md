@@ -1,10 +1,10 @@
 # Reddit Mod from Discord
 
-Discord bot that polls Reddit reports for a single subreddit and posts one actionable alert message per reported item into a Discord mod channel.
+Discord bot that polls Reddit reports for one or more subreddits and posts one actionable alert message per reported item into per-server Discord mod channels.
 
 ## What this does
 
-- Polls `r/{subreddit}` report queue on an interval (default 5 minutes)
+- Polls `r/{subreddit}` report queue on an interval (default 5 minutes per server)
 - Posts one Discord message per newly seen reported post/comment
 - Dedupes by Reddit fullname (`t3_xxx` submissions, `t1_xxx` comments)
 - Provides persistent moderation buttons that survive restarts
@@ -67,6 +67,12 @@ Required:
 - `REDDIT_CLIENT_SECRET`
 - `REDDIT_REFRESH_TOKEN`
 - `DISCORD_ALLOWED_ROLE_IDS`
+ 
+Optional:
+
+- `MULTI_SERVER_CONFIG_PATH` (multi-server only; see appendix below)
+
+If you use `MULTI_SERVER_CONFIG_PATH`, you can omit per-server values from `.env` and set them in the JSON file instead.
 
 Defaults already set in `.env.example`:
 
@@ -119,3 +125,54 @@ If you prefer password flow (not recommended for dedicated mod accounts and long
 - `REDDIT_PASSWORD`
 
 If `REDDIT_REFRESH_TOKEN` is set, it takes precedence.
+
+## Appendix: Multi-server configuration (advanced)
+
+If you run one bot instance across multiple Discord servers (or multiple subreddits within the same server), you can provide per-setup overrides in a JSON file and point to it with `MULTI_SERVER_CONFIG_PATH`. This is optional; single-server setup with `.env` is still the recommended path.
+
+`cp multi_server_config.json.example multi_server_config.json`, and then in your `.env`, edit it to point at it:
+
+```bash
+MULTI_SERVER_CONFIG_PATH=multi_server_config.json
+DISCORD_TOKEN=xxx
+```
+
+Each top-level key is a setup id string. Values override any env defaults for that setup. Include `discord_guild_id` for each setup (unless the setup id is itself a guild id). You can define multiple setups that point at the same `discord_guild_id` to support multiple subreddits in one server. The only settings that cannot be overridden are the Discord bot token, DB path, view TTL, demo mode options, and debug log flag.
+
+If any setup is missing required settings after merging defaults + overrides, the bot will refuse to start and log the missing setup IDs.
+
+Example JSON:
+
+```json
+{
+  "codelyoko": {
+    "discord_guild_id": 123456789012345678,
+    "discord_mod_channel_id": 111111111111111111,
+    "discord_allowed_role_ids": [222222222222222222, 333333333333333333],
+    "discord_silent_notifications": true,
+    "reddit_client_id": "app_client_id",
+    "reddit_client_secret": "app_client_secret",
+    "reddit_refresh_token": "refresh_token_here",
+    "reddit_user_agent": "reddit-mod-from-discord/0.1 by u/mod_account",
+    "reddit_subreddit": "example_subreddit",
+    "poll_interval_minutes": 5,
+    "post_report_threshold": 1,
+    "comment_report_threshold": 1,
+    "max_reports_per_poll": 100
+  },
+  "other_subreddit": {
+    "discord_guild_id": 987654321098765432,
+    "discord_mod_channel_id": 444444444444444444,
+    "discord_allowed_role_ids": [555555555555555555],
+    "reddit_client_id": "other_client_id",
+    "reddit_client_secret": "other_client_secret",
+    "reddit_refresh_token": "other_refresh_token",
+    "reddit_user_agent": "reddit-mod-from-discord/0.1 by u/other_mod_account",
+    "reddit_subreddit": "other_subreddit",
+    "poll_interval_minutes": 2,
+    "post_report_threshold": 2,
+    "comment_report_threshold": 2,
+    "max_reports_per_poll": 50
+  }
+}
+```
