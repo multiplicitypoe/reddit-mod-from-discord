@@ -483,3 +483,23 @@ class BotStore:
             (setup_id, cutoff),
         )
         await conn.commit()
+
+    async def clear_setup_history(self, setup_id: str) -> None:
+        conn = self._require_conn()
+        cursor = await conn.execute(
+            "SELECT DISTINCT discord_message_id FROM reported_items WHERE setup_id = ?",
+            (setup_id,),
+        )
+        rows = await cursor.fetchall()
+        await cursor.close()
+        message_ids = [row["discord_message_id"] for row in rows if row["discord_message_id"]]
+        if message_ids:
+            placeholders = ",".join("?" for _ in message_ids)
+            await conn.execute(
+                f"DELETE FROM alert_views WHERE message_id IN ({placeholders})",
+                tuple(message_ids),
+            )
+        await conn.execute("DELETE FROM reported_items WHERE setup_id = ?", (setup_id,))
+        await conn.execute("DELETE FROM modlog_entries WHERE setup_id = ?", (setup_id,))
+        await conn.execute("DELETE FROM modlog_state WHERE setup_id = ?", (setup_id,))
+        await conn.commit()
