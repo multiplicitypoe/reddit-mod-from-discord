@@ -174,21 +174,10 @@ def build_report_embed(payload: ReportViewPayload) -> discord.Embed:
     else:
         status_value = "active"
 
-    status_line = f"**Status:** {status_value}"
-    comments_line = None
-    if payload.kind == "submission" and payload.num_comments is not None:
-        comments_line = f"**Comments:** {payload.num_comments}"
-
     description_lines = [f"**Title:** {_truncate(summary, 300)}"]
-    if comments_line:
-        combined = f"{status_line} | {comments_line}"
-        if len(combined) <= 80:
-            description_lines.append(combined)
-        else:
-            description_lines.append(status_line)
-            description_lines.append(comments_line)
-    else:
-        description_lines.append(status_line)
+    description_lines.append(f"**Status:** {status_value}")
+    if payload.kind == "submission" and payload.num_comments is not None:
+        description_lines.append(f"**Comments:** {payload.num_comments}")
 
     if (
         safe_link_url
