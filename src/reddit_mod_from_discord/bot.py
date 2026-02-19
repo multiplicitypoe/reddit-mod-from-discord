@@ -410,6 +410,14 @@ class RedditModBot(discord.Client):
             return payload.num_reports >= settings.comment_report_threshold
         return payload.num_reports >= settings.post_report_threshold
 
+    def _passes_age(self, payload: ReportViewPayload, settings: ResolvedSettings) -> bool:
+        if settings.max_item_age_hours <= 0:
+            return True
+        if payload.created_utc <= 0:
+            return True
+        max_age_s = settings.max_item_age_hours * 3600
+        return (time.time() - payload.created_utc) <= max_age_s
+
     async def _poll_loop(self, guild: discord.Guild, runtime: SetupRuntime) -> None:
         await asyncio.sleep(2)
         while not self.is_closed():
@@ -447,6 +455,8 @@ class RedditModBot(discord.Client):
             for report in reports:
                 seen_fullnames.add(report.fullname)
                 payload = ReportViewPayload.from_reported_item(report, setup_id=runtime.setup_id)
+                if not self._passes_age(payload, runtime.settings):
+                    continue
                 if not self._passes_threshold(payload, runtime.settings):
                     continue
                 should_alert = await self.store.should_alert(report, runtime.setup_id, guild.id)

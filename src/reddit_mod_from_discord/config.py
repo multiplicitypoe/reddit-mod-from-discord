@@ -29,6 +29,7 @@ class Settings:
     post_report_threshold: int
     comment_report_threshold: int
     max_reports_per_poll: int
+    max_item_age_hours: int
     db_path: str
     view_store_ttl_hours: int
     debug_logs: bool
@@ -62,6 +63,7 @@ class ResolvedSettings:
     post_report_threshold: int
     comment_report_threshold: int
     max_reports_per_poll: int
+    max_item_age_hours: int
     debug_logs: bool
 
 
@@ -84,6 +86,7 @@ MULTI_SERVER_ALLOWED_KEYS = {
     "post_report_threshold",
     "comment_report_threshold",
     "max_reports_per_poll",
+    "max_item_age_hours",
 }
 
 
@@ -104,6 +107,7 @@ class SettingsOverrides:
     post_report_threshold: int | None | object = UNSET
     comment_report_threshold: int | None | object = UNSET
     max_reports_per_poll: int | None | object = UNSET
+    max_item_age_hours: int | None | object = UNSET
 
 
 def _env_optional(name: str) -> str | None:
@@ -209,6 +213,7 @@ def _parse_multi_server_overrides(payload: dict[str, Any]) -> SettingsOverrides:
         post_report_threshold=_as_optional_int(payload.get("post_report_threshold", UNSET)),
         comment_report_threshold=_as_optional_int(payload.get("comment_report_threshold", UNSET)),
         max_reports_per_poll=_as_optional_int(payload.get("max_reports_per_poll", UNSET)),
+        max_item_age_hours=_as_optional_int(payload.get("max_item_age_hours", UNSET)),
     )
 
 
@@ -279,12 +284,13 @@ def resolve_settings(base: Settings, overrides: SettingsOverrides | None) -> Res
             reddit_redirect_uri=base.reddit_redirect_uri,
             reddit_user_agent=base.reddit_user_agent,
             reddit_subreddit=base.reddit_subreddit,
-            poll_interval_minutes=base.poll_interval_minutes,
-            post_report_threshold=base.post_report_threshold,
-            comment_report_threshold=base.comment_report_threshold,
-            max_reports_per_poll=base.max_reports_per_poll,
-            debug_logs=base.debug_logs,
-        )
+        poll_interval_minutes=base.poll_interval_minutes,
+        post_report_threshold=base.post_report_threshold,
+        comment_report_threshold=base.comment_report_threshold,
+        max_reports_per_poll=base.max_reports_per_poll,
+        max_item_age_hours=base.max_item_age_hours,
+        debug_logs=base.debug_logs,
+    )
 
     return ResolvedSettings(
         discord_token=base.discord_token,
@@ -353,6 +359,11 @@ def resolve_settings(base: Settings, overrides: SettingsOverrides | None) -> Res
             "max_reports_per_poll",
             overrides.max_reports_per_poll,
             base.max_reports_per_poll,
+        ),
+        max_item_age_hours=_resolve_required(
+            "max_item_age_hours",
+            overrides.max_item_age_hours,
+            base.max_item_age_hours,
         ),
         debug_logs=base.debug_logs,
     )
@@ -427,6 +438,7 @@ def load_settings() -> Settings:
         post_report_threshold=max(_env_int("POST_REPORT_THRESHOLD", 1), 1),
         comment_report_threshold=max(_env_int("COMMENT_REPORT_THRESHOLD", 1), 1),
         max_reports_per_poll=max(_env_int("MAX_REPORTS_PER_POLL", 100), 1),
+        max_item_age_hours=max(_env_int("MAX_ITEM_AGE_HOURS", 72), 0),
         db_path=_env("DB_PATH", "data/reddit_mod_from_discord.sqlite3"),
         view_store_ttl_hours=max(_env_int("VIEW_STORE_TTL_HOURS", 168), 1),
         debug_logs=_env_bool("DEBUG_LOGS", False),

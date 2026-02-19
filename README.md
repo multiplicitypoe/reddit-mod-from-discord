@@ -84,6 +84,7 @@ Note: `DISCORD_ALLOWED_ROLE_IDS` are server-specific. If you move the bot to a n
 - `POST_REPORT_THRESHOLD=1`
 - `COMMENT_REPORT_THRESHOLD=1`
 - `MAX_REPORTS_PER_POLL=100`
+- `MAX_ITEM_AGE_HOURS=72`
 - `DB_PATH=data/reddit_mod_from_discord.sqlite3`
 - `VIEW_STORE_TTL_HOURS=168`
 
@@ -158,7 +159,8 @@ Example JSON:
     "poll_interval_minutes": 5,
     "post_report_threshold": 1,
     "comment_report_threshold": 1,
-    "max_reports_per_poll": 100
+    "max_reports_per_poll": 100,
+    "max_item_age_hours": 72
   },
   "other_subreddit": {
     "discord_guild_id": 987654321098765432,
@@ -172,7 +174,8 @@ Example JSON:
     "poll_interval_minutes": 2,
     "post_report_threshold": 2,
     "comment_report_threshold": 2,
-    "max_reports_per_poll": 50
+    "max_reports_per_poll": 50,
+    "max_item_age_hours": 72
   }
 }
 ```
