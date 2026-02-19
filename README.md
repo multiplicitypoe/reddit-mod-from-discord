@@ -85,6 +85,7 @@ Note: `DISCORD_ALLOWED_ROLE_IDS` are server-specific. If you move the bot to a n
 - `COMMENT_REPORT_THRESHOLD=1`
 - `MAX_REPORTS_PER_POLL=100`
 - `MAX_ITEM_AGE_HOURS=72`
+- `MODLOG_FETCH_LIMIT=50`
 - `DB_PATH=data/reddit_mod_from_discord.sqlite3`
 - `VIEW_STORE_TTL_HOURS=168`
 
@@ -141,6 +142,8 @@ DISCORD_TOKEN=xxx
 Each top-level key is a setup id string. Values override any env defaults for that setup. Include `discord_guild_id` for each setup (unless the setup id is itself a guild id). You can define multiple setups that point at the same `discord_guild_id` to support multiple subreddits in one server. The only settings that cannot be overridden are the Discord bot token, DB path, view TTL, demo mode options, and debug log flag.
 
 If any setup is missing required settings after merging defaults + overrides, the bot will refuse to start and log the missing setup IDs.
+
+When an alert is created for an item that is already approved/removed/locked/ignored in Reddit, the bot will try to fetch recent mod-log entries for that item (up to `MODLOG_FETCH_LIMIT`) and include them in the audit log section.
 
 Example JSON:
 

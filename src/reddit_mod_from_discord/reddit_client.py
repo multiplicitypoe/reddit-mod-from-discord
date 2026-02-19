@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import time
+from datetime import datetime, timezone
 from typing import Protocol
 
 import praw
@@ -62,6 +63,15 @@ class RedditApi(Protocol):
         mod_note: str,
         public_as_subreddit: bool,
     ) -> None: ...
+
+    async def fetch_modlog_entries(
+        self,
+        subreddit_name: str,
+        fullname: str,
+        *,
+        limit: int,
+        max_age_s: float | None = None,
+    ) -> list[str]: ...
 
 
 def _squash_whitespace(text: str) -> str:
@@ -151,9 +161,9 @@ class RedditService:
             total += 1
         return lines, total
 
-    async def _run(self, fn, *args):
+    async def _run(self, fn, *args, **kwargs):
         async with self._lock:
-            return await asyncio.to_thread(fn, *args)
+            return await asyncio.to_thread(fn, *args, **kwargs)
 
     def _thing_from_fullname(self, fullname: str) -> Comment | Submission:
         prefix, _, thing_id = fullname.partition("_")
@@ -506,6 +516,64 @@ class RedditService:
     async def refresh_state(self, fullname: str) -> dict[str, object]:
         return await self._run(self._refresh_state_sync, fullname)
 
+    def _format_modlog_entry(self, action) -> str:
+        action_name = str(getattr(action, "action", "") or "unknown")
+        mod = getattr(action, "mod", None)
+        mod_name = "unknown"
+        if mod is not None:
+            mod_name = getattr(mod, "name", None) or str(mod)
+        created_raw = getattr(action, "created_utc", None)
+        if isinstance(created_raw, (int, float)):
+            stamp = datetime.fromtimestamp(float(created_raw), tz=timezone.utc).strftime(
+                "%Y-%m-%d %H:%M UTC"
+            )
+        else:
+            stamp = "unknown time"
+        details = getattr(action, "details", None)
+        extra = ""
+        if details:
+            extra = f" ({details})"
+        return f"modlog: {action_name} by u/{mod_name} at {stamp}{extra}"
+
+    def _fetch_modlog_entries_sync(
+        self,
+        subreddit_name: str,
+        fullname: str,
+        *,
+        limit: int,
+        max_age_s: float | None = None,
+    ) -> list[str]:
+        subreddit = self._reddit.subreddit(subreddit_name)
+        now = time.time()
+        entries: list[str] = []
+        for action in subreddit.mod.log(limit=limit):
+            target_fullname = getattr(action, "target_fullname", None)
+            if target_fullname != fullname:
+                continue
+            created_raw = getattr(action, "created_utc", None)
+            if isinstance(created_raw, (int, float)) and max_age_s:
+                if now - float(created_raw) > max_age_s:
+                    continue
+            entries.append(self._format_modlog_entry(action))
+        entries.reverse()
+        return entries
+
+    async def fetch_modlog_entries(
+        self,
+        subreddit_name: str,
+        fullname: str,
+        *,
+        limit: int,
+        max_age_s: float | None = None,
+    ) -> list[str]:
+        return await self._run(
+            self._fetch_modlog_entries_sync,
+            subreddit_name,
+            fullname,
+            limit,
+            max_age_s=max_age_s,
+        )
+
     def _test_auth_sync(self) -> str:
         me = self._reddit.user.me()
         if me is None:
@@ -606,6 +674,16 @@ class DemoRedditService:
         public_as_subreddit: bool,
     ) -> None:
         return None
+
+    async def fetch_modlog_entries(
+        self,
+        subreddit_name: str,
+        fullname: str,
+        *,
+        limit: int,
+        max_age_s: float | None = None,
+    ) -> list[str]:
+        return []
 
 
 def _main() -> None:

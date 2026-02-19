@@ -30,6 +30,7 @@ class Settings:
     comment_report_threshold: int
     max_reports_per_poll: int
     max_item_age_hours: int
+    modlog_fetch_limit: int
     db_path: str
     view_store_ttl_hours: int
     debug_logs: bool
@@ -64,6 +65,7 @@ class ResolvedSettings:
     comment_report_threshold: int
     max_reports_per_poll: int
     max_item_age_hours: int
+    modlog_fetch_limit: int
     debug_logs: bool
 
 
@@ -87,6 +89,7 @@ MULTI_SERVER_ALLOWED_KEYS = {
     "comment_report_threshold",
     "max_reports_per_poll",
     "max_item_age_hours",
+    "modlog_fetch_limit",
 }
 
 
@@ -108,6 +111,7 @@ class SettingsOverrides:
     comment_report_threshold: int | None | object = UNSET
     max_reports_per_poll: int | None | object = UNSET
     max_item_age_hours: int | None | object = UNSET
+    modlog_fetch_limit: int | None | object = UNSET
 
 
 def _env_optional(name: str) -> str | None:
@@ -214,6 +218,7 @@ def _parse_multi_server_overrides(payload: dict[str, Any]) -> SettingsOverrides:
         comment_report_threshold=_as_optional_int(payload.get("comment_report_threshold", UNSET)),
         max_reports_per_poll=_as_optional_int(payload.get("max_reports_per_poll", UNSET)),
         max_item_age_hours=_as_optional_int(payload.get("max_item_age_hours", UNSET)),
+        modlog_fetch_limit=_as_optional_int(payload.get("modlog_fetch_limit", UNSET)),
     )
 
 
@@ -289,6 +294,7 @@ def resolve_settings(base: Settings, overrides: SettingsOverrides | None) -> Res
         comment_report_threshold=base.comment_report_threshold,
         max_reports_per_poll=base.max_reports_per_poll,
         max_item_age_hours=base.max_item_age_hours,
+        modlog_fetch_limit=base.modlog_fetch_limit,
         debug_logs=base.debug_logs,
     )
 
@@ -365,6 +371,11 @@ def resolve_settings(base: Settings, overrides: SettingsOverrides | None) -> Res
             overrides.max_item_age_hours,
             base.max_item_age_hours,
         ),
+        modlog_fetch_limit=_resolve_required(
+            "modlog_fetch_limit",
+            overrides.modlog_fetch_limit,
+            base.modlog_fetch_limit,
+        ),
         debug_logs=base.debug_logs,
     )
 
@@ -439,6 +450,7 @@ def load_settings() -> Settings:
         comment_report_threshold=max(_env_int("COMMENT_REPORT_THRESHOLD", 1), 1),
         max_reports_per_poll=max(_env_int("MAX_REPORTS_PER_POLL", 100), 1),
         max_item_age_hours=max(_env_int("MAX_ITEM_AGE_HOURS", 72), 0),
+        modlog_fetch_limit=max(_env_int("MODLOG_FETCH_LIMIT", 50), 0),
         db_path=_env("DB_PATH", "data/reddit_mod_from_discord.sqlite3"),
         view_store_ttl_hours=max(_env_int("VIEW_STORE_TTL_HOURS", 168), 1),
         debug_logs=_env_bool("DEBUG_LOGS", False),
