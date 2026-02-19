@@ -418,6 +418,11 @@ class RedditModBot(discord.Client):
         max_age_s = settings.max_item_age_hours * 3600
         return (time.time() - payload.created_utc) <= max_age_s
 
+    def _should_fetch_modlog(self, payload: ReportViewPayload, settings: ResolvedSettings) -> bool:
+        if settings.modlog_fetch_limit <= 0:
+            return False
+        return payload.approved or payload.removed or payload.reports_ignored or payload.locked
+
     async def _poll_loop(self, guild: discord.Guild, runtime: SetupRuntime) -> None:
         await asyncio.sleep(2)
         while not self.is_closed():
@@ -464,6 +469,28 @@ class RedditModBot(discord.Client):
                     # Update existing alert message in-place if present.
                     await self._update_existing_alert(guild, runtime, report)
                     continue
+
+                if (
+                    not self.settings.demo_mode
+                    and runtime.settings.reddit_subreddit
+                    and self._should_fetch_modlog(payload, runtime.settings)
+                ):
+                    try:
+                        max_age_s = (
+                            runtime.settings.max_item_age_hours * 3600
+                            if runtime.settings.max_item_age_hours > 0
+                            else None
+                        )
+                        history = await runtime.reddit.fetch_modlog_entries(
+                            runtime.settings.reddit_subreddit,
+                            payload.fullname,
+                            limit=runtime.settings.modlog_fetch_limit,
+                            max_age_s=max_age_s,
+                        )
+                        if history:
+                            payload.action_log.extend(history)
+                    except Exception:
+                        logger.exception("Failed to fetch modlog entries for %s", payload.fullname)
 
                 view = ReportView(
                     payload=payload,

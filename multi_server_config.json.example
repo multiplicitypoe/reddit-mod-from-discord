@@ -13,7 +13,8 @@
     "post_report_threshold": 1,
     "comment_report_threshold": 1,
     "max_reports_per_poll": 100,
-    "max_item_age_hours": 72
+    "max_item_age_hours": 72,
+    "modlog_fetch_limit": 50
   },
   "other_subreddit": {
     "discord_guild_id": 987654321098765432,
@@ -28,6 +29,7 @@
     "post_report_threshold": 2,
     "comment_report_threshold": 2,
     "max_reports_per_poll": 50,
-    "max_item_age_hours": 72
+    "max_item_age_hours": 72,
+    "modlog_fetch_limit": 50
   }
 }
