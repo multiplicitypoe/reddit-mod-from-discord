@@ -166,27 +166,37 @@ def build_report_embed(payload: ReportViewPayload) -> discord.Embed:
     if payload.locked:
         status.append("locked")
     if payload.reports_ignored:
-        status.append("reports ignored")
+        status.append("ignored")
     if payload.handled:
         status.append("handled")
     if status:
         status_value = ", ".join(status)
     else:
-        status_value = "active (not approved/removed)"
+        status_value = "active"
 
-    detail_parts = [f"**Status:** {status_value}"]
+    status_line = f"**Status:** {status_value}"
+    comments_line = None
     if payload.kind == "submission" and payload.num_comments is not None:
-        detail_parts.append(f"**Comments:** {payload.num_comments}")
+        comments_line = f"**Comments:** {payload.num_comments}"
+
+    description_lines = [f"**Title:** {_truncate(summary, 300)}"]
+    if comments_line:
+        combined = f"{status_line} | {comments_line}"
+        if len(combined) <= 80:
+            description_lines.append(combined)
+        else:
+            description_lines.append(status_line)
+            description_lines.append(comments_line)
+    else:
+        description_lines.append(status_line)
+
     if (
         safe_link_url
         and safe_link_url != safe_permalink
         and safe_link_url != safe_media_url
     ):
-        detail_parts.append(f"**Link:** {safe_link_url}")
+        description_lines.append(f"**Link:** {safe_link_url}")
 
-    description_lines = [f"**Title:** {_truncate(summary, 300)}"]
-    if detail_parts:
-        description_lines.append(_truncate(" | ".join(detail_parts), 400))
     if payload.snippet:
         description_lines.append(
             f"**Excerpt:** {_truncate(_escape_discord_text(payload.snippet), 900)}"
