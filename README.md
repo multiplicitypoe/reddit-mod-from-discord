@@ -95,6 +95,16 @@ Note: `DISCORD_ALLOWED_ROLE_IDS` are server-specific. If you move the bot to a n
 - `/modsync` - trigger an immediate poll cycle
 - `/modhealth` - basic runtime status
 
+## Clearing history (testing)
+
+If you delete Discord messages while testing and want the bot to treat items as new again, clear the stored history:
+
+```bash
+CLEAR_SETUP_ID=pathofexile make clear-history
+```
+
+`CLEAR_SETUP_ID` must match a key in `multi_server_config.json`. This clears reported-item history, stored views, and cached mod-log entries for that setup.
+
 ## Reddit auth note
 
 Actions run as the Reddit account that authorized the refresh token. If you want actions to come from a dedicated mod account, generate the refresh token while logged into that dedicated account.

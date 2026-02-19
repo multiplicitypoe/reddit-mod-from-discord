@@ -582,6 +582,8 @@ class RedditModBot(discord.Client):
         *,
         skip_fullnames: set[str],
     ) -> None:
+        if runtime.settings.modlog_fetch_limit <= 0:
+            return
         try:
             refs = await self.store.list_unhandled_alerts(runtime.setup_id, limit=50)
         except Exception:

@@ -569,7 +569,6 @@ class RedditService:
     ) -> list[tuple[str, float, str]]:
         return await self._run(
             self._fetch_recent_modlog_entries_sync,
-            subreddit_name,
             limit,
             min_created_utc=min_created_utc,
         )

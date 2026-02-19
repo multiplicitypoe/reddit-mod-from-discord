@@ -1,4 +1,4 @@
-.PHONY: ensure-venv install run-bot demo-mode test-reddit test-discord test-discord-post test-discord-comment reddit-token ensure-data ensure-env build-docker stop-docker run-docker docker run-docker-bot help
+.PHONY: ensure-venv install run-bot demo-mode test-reddit test-discord test-discord-post test-discord-comment reddit-token clear-history ensure-data ensure-env build-docker stop-docker run-docker docker run-docker-bot help
 
 VENV ?= .venv
 PYTHON ?= python3
@@ -72,6 +72,9 @@ test-discord-comment: install ensure-env
 
 reddit-token: install ensure-env
 	PYTHONPATH=src "$(PY)" tools/obtain_refresh_token.py
+
+clear-history: install ensure-env
+	PYTHONPATH=src "$(PY)" tools/clear_setup_history.py
 
 build-docker: ensure-data
 	$(DOCKER) build -t "$(IMAGE):$(TAG)" "$(CURDIR)"
