@@ -256,8 +256,6 @@ class RedditService:
                     num_comments = int(getattr(thing, "num_comments", 0) or 0)
                 except Exception:
                     num_comments = 0
-                if not body:
-                    body = link_url or ""
                 snippet = body
             else:
                 continue

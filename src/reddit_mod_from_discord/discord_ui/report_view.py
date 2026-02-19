@@ -191,9 +191,14 @@ def build_report_embed(payload: ReportViewPayload) -> discord.Embed:
         description_lines.append(f"**Link:** {safe_link_url}")
 
     if payload.snippet:
-        description_lines.append(
-            f"**Text:** {_truncate(_escape_discord_text(payload.snippet), 900)}"
-        )
+        raw_snippet = payload.snippet.strip()
+        safe_snippet = sanitize_http_url(raw_snippet)
+        if safe_snippet and safe_snippet in {safe_link_url, safe_permalink, safe_media_url}:
+            raw_snippet = ""
+        if raw_snippet:
+            description_lines.append(
+                f"**Text:** {_truncate(_escape_discord_text(raw_snippet), 900)}"
+            )
 
     embed.description = "\n".join(description_lines)
 
