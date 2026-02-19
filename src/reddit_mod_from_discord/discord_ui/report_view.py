@@ -158,16 +158,6 @@ def build_report_embed(payload: ReportViewPayload) -> discord.Embed:
     title = f"Reported {thing_label} in /r/{subreddit} by {author}"
     embed = discord.Embed(title=_truncate(title, 256), color=color, url=safe_permalink)
     summary = _escape_discord_text(payload.title if payload.title else thing_label)
-    description = f"**Title:** {_truncate(summary, 300)}"
-    if payload.snippet:
-        description += f"\n{_truncate(_escape_discord_text(payload.snippet), 900)}"
-    embed.description = description
-
-    if safe_media_url:
-        embed.set_image(url=safe_media_url)
-    elif safe_thumbnail_url:
-        embed.set_thumbnail(url=safe_thumbnail_url)
-
     status: list[str] = []
     if payload.approved:
         status.append("approved")
@@ -179,15 +169,35 @@ def build_report_embed(payload: ReportViewPayload) -> discord.Embed:
         status.append("reports ignored")
     if payload.handled:
         status.append("handled")
-
-    user_reports = _normalize_report_lines(payload.user_reports)
-    mod_reports = _normalize_report_lines(payload.mod_reports)
-
     if status:
         status_value = ", ".join(status)
     else:
         status_value = "active (not approved/removed)"
-    embed.add_field(name="Status", value=status_value, inline=False)
+
+    detail_parts = [f"Status: {status_value}"]
+    if payload.kind == "submission" and payload.num_comments is not None:
+        detail_parts.append(f"Comments: {payload.num_comments}")
+    if (
+        safe_link_url
+        and safe_link_url != safe_permalink
+        and safe_link_url != safe_media_url
+    ):
+        detail_parts.append(f"Link: {safe_link_url}")
+
+    description = f"**Title:** {_truncate(summary, 300)}"
+    if detail_parts:
+        description += f"\n{_truncate(' | '.join(detail_parts), 400)}"
+    if payload.snippet:
+        description += f"\n{_truncate(_escape_discord_text(payload.snippet), 900)}"
+    embed.description = description
+
+    if safe_media_url:
+        embed.set_image(url=safe_media_url)
+    elif safe_thumbnail_url:
+        embed.set_thumbnail(url=safe_thumbnail_url)
+
+    user_reports = _normalize_report_lines(payload.user_reports)
+    mod_reports = _normalize_report_lines(payload.mod_reports)
 
     all_reports = _aggregate_reports(user_reports + mod_reports)
     report_lines: list[str] = []
@@ -201,12 +211,6 @@ def build_report_embed(payload: ReportViewPayload) -> discord.Embed:
         inline=False,
     )
 
-    if (
-        safe_link_url
-        and safe_link_url != safe_permalink
-        and safe_link_url != safe_media_url
-    ):
-        embed.add_field(name="Link", value=_truncate(safe_link_url, 1024), inline=False)
     if payload.action_log:
         escaped_audit = [_format_audit_log_line(line) for line in payload.action_log[-10:]]
         embed.add_field(

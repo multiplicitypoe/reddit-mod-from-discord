@@ -20,6 +20,7 @@ class ReportedItem:
     snippet: str
     num_reports: int
     created_utc: float
+    num_comments: int | None
     locked: bool
     reports_ignored: bool
     removed: bool
@@ -42,6 +43,7 @@ class ReportViewPayload:
     snippet: str
     num_reports: int
     created_utc: float
+    num_comments: int | None
     locked: bool
     reports_ignored: bool
     removed: bool
@@ -70,6 +72,7 @@ class ReportViewPayload:
             snippet=item.snippet,
             num_reports=item.num_reports,
             created_utc=item.created_utc,
+            num_comments=item.num_comments,
             locked=item.locked,
             reports_ignored=item.reports_ignored,
             removed=item.removed,
@@ -94,6 +97,7 @@ class ReportViewPayload:
             "snippet": self.snippet,
             "num_reports": self.num_reports,
             "created_utc": self.created_utc,
+            "num_comments": self.num_comments,
             "locked": self.locked,
             "reports_ignored": self.reports_ignored,
             "removed": self.removed,
@@ -147,6 +151,7 @@ class ReportViewPayload:
             snippet=str(payload.get("snippet", "")),
             num_reports=int(payload.get("num_reports", 0)),
             created_utc=float(payload.get("created_utc", 0.0)),
+            num_comments=payload.get("num_comments") if payload.get("num_comments") is not None else None,
             locked=bool(payload.get("locked", False)),
             reports_ignored=bool(payload.get("reports_ignored", False)),
             removed=bool(payload.get("removed", False)),

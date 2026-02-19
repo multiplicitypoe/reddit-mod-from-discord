@@ -100,6 +100,13 @@ class RedditModBot(discord.Client):
             if isinstance(value, (int, float)):
                 return float(value)
             return default
+
+        def _get_int(key: str, default: int) -> int:
+            value = fetched.get(key)
+            if isinstance(value, (int, float)):
+                return int(value)
+            return default
+
         payload = ReportViewPayload(
             fullname=demo_fullname,
             kind="submission",
@@ -113,6 +120,7 @@ class RedditModBot(discord.Client):
             snippet=_get_str("snippet", "This is demo mode. Buttons log actions only."),
             num_reports=1,
             created_utc=_get_float("created_utc", now),
+            num_comments=_get_int("num_comments", 0),
             locked=False,
             reports_ignored=False,
             removed=False,
@@ -142,6 +150,7 @@ class RedditModBot(discord.Client):
             snippet=payload.snippet,
             num_reports=payload.num_reports,
             created_utc=payload.created_utc,
+            num_comments=payload.num_comments,
             locked=payload.locked,
             reports_ignored=payload.reports_ignored,
             removed=payload.removed,
@@ -592,8 +601,6 @@ class RedditModBot(discord.Client):
         *,
         skip_fullnames: set[str],
     ) -> None:
-        if runtime.settings.modlog_fetch_limit <= 0:
-            return
         try:
             refs = await self.store.list_unhandled_alerts(runtime.setup_id, limit=50)
         except Exception:
@@ -682,6 +689,9 @@ class RedditModBot(discord.Client):
             if payload.num_reports != new_report.num_reports:
                 payload.num_reports = new_report.num_reports
                 changed = True
+            if payload.num_comments != new_report.num_comments:
+                payload.num_comments = new_report.num_comments
+                changed = True
             if payload.locked != new_report.locked:
                 payload.locked = new_report.locked
                 changed = True
@@ -721,6 +731,10 @@ class RedditModBot(discord.Client):
             raw = refreshed_state.get("num_reports")
             if isinstance(raw, (int, float)) and payload.num_reports != int(raw):
                 payload.num_reports = max(0, int(raw))
+                changed = True
+            raw = refreshed_state.get("num_comments")
+            if isinstance(raw, (int, float)) and payload.num_comments != int(raw):
+                payload.num_comments = max(0, int(raw))
                 changed = True
 
         if runtime.settings.modlog_fetch_limit > 0:
