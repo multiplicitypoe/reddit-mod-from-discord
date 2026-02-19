@@ -140,6 +140,10 @@ def _aggregate_reports(lines: list[str]) -> list[str]:
     return [f"{_escape_discord_text(reason)} x{count}" for reason, count in items if reason]
 
 
+def _format_duration(seconds: float) -> str:
+    return f"{seconds:.2f}s"
+
+
 def build_report_embed(payload: ReportViewPayload) -> discord.Embed:
     thing_label = "Post" if payload.kind == "submission" else "Comment"
     if payload.handled:
@@ -287,6 +291,7 @@ class BanModal(discord.ui.Modal, title="Ban User"):
             await interaction.followup.send("Username is required.", ephemeral=True)
             return
 
+        action_start = time.monotonic()
         try:
             reason = str(self.ban_reason.value or "").strip()
             modlog_url = await self._view.reddit.ban_user(
@@ -301,6 +306,7 @@ class BanModal(discord.ui.Modal, title="Ban User"):
             logger.exception("Ban action failed")
             await interaction.followup.send(f"Ban failed: {exc}", ephemeral=True)
             return
+        action_s = time.monotonic() - action_start
 
         duration_label = f"{duration_days}d" if duration_days else "permanent"
         if modlog_url:
@@ -311,6 +317,7 @@ class BanModal(discord.ui.Modal, title="Ban User"):
             interaction,
             self._message_ref,
             action_text,
+            action_duration_s=action_s,
         )
 
 
@@ -347,6 +354,7 @@ class RemovalMessageModal(discord.ui.Modal, title="Removal Message"):
             await interaction.followup.send("Message body is required.", ephemeral=True)
             return
 
+        action_start = time.monotonic()
         try:
             await self._view.reddit.send_removal_message(
                 fullname=self._view.payload.fullname,
@@ -359,11 +367,13 @@ class RemovalMessageModal(discord.ui.Modal, title="Removal Message"):
             logger.exception("Removal message action failed")
             await interaction.followup.send(f"Removal message failed: {exc}", ephemeral=True)
             return
+        action_s = time.monotonic() - action_start
 
         await self._view.complete_modal_action(
             interaction,
             self._message_ref,
             "sent removal message as subreddit",
+            action_duration_s=action_s,
         )
 
 
@@ -406,6 +416,7 @@ class ModmailModal(discord.ui.Modal, title="Send Modmail"):
             await interaction.followup.send("Recipient, subject, and body are required.", ephemeral=True)
             return
 
+        action_start = time.monotonic()
         try:
             modmail_url = await self._view.reddit.send_modmail(
                 subreddit_name=self._view.payload.subreddit,
@@ -418,6 +429,7 @@ class ModmailModal(discord.ui.Modal, title="Send Modmail"):
             logger.exception("Modmail action failed")
             await interaction.followup.send(f"Modmail failed: {exc}", ephemeral=True)
             return
+        action_s = time.monotonic() - action_start
 
         if modmail_url:
             action_text = f"sent a [modmail]({modmail_url}) to u/{recipient}"
@@ -428,6 +440,7 @@ class ModmailModal(discord.ui.Modal, title="Send Modmail"):
             interaction,
             self._message_ref,
             action_text,
+            action_duration_s=action_s,
         )
 
 
@@ -483,6 +496,7 @@ class ReplyModal(discord.ui.Modal, title="Reply"):
         if self._view.payload.kind != "submission":
             sticky = False
 
+        action_start = time.monotonic()
         try:
             if remove_first:
                 await self._view.reddit.remove_item(self._view.payload.fullname, spam=False)
@@ -498,6 +512,7 @@ class ReplyModal(discord.ui.Modal, title="Reply"):
             logger.exception("Reply action failed")
             await interaction.followup.send(f"Reply failed: {exc}", ephemeral=True)
             return
+        action_s = time.monotonic() - action_start
 
         sticky_label = "sticky" if sticky else "no-sticky"
         lock_label = " + locked" if lock else ""
@@ -510,6 +525,7 @@ class ReplyModal(discord.ui.Modal, title="Reply"):
             interaction,
             self._message_ref,
             f"{remove_label} ({detail})",
+            action_duration_s=action_s,
         )
 
 
@@ -556,13 +572,37 @@ class MoreActionsSelect(discord.ui.Select):
             return
         if selected == "refresh":
             await interaction.response.defer(ephemeral=True, thinking=True)
+            total_start = time.monotonic()
+            refresh_start = time.monotonic()
+            refresh_failed = False
             try:
                 await view._refresh_state()
             except Exception as exc:
+                refresh_failed = True
+                refresh_s = time.monotonic() - refresh_start
+                total_s = time.monotonic() - total_start
+                view._log_action_timing(
+                    interaction,
+                    "refreshed state",
+                    total_s=total_s,
+                    refresh_s=refresh_s,
+                    refresh_failed=refresh_failed,
+                )
                 logger.exception("Refresh state failed")
                 await interaction.followup.send(f"Refresh failed: {exc}", ephemeral=True)
                 return
+            refresh_s = time.monotonic() - refresh_start
+            update_start = time.monotonic()
             await view._apply_message_update(interaction, ref)
+            update_s = time.monotonic() - update_start
+            total_s = time.monotonic() - total_start
+            view._log_action_timing(
+                interaction,
+                "refreshed state",
+                total_s=total_s,
+                refresh_s=refresh_s,
+                update_s=update_s,
+            )
             await interaction.followup.send("Refreshed.", ephemeral=True)
             return
 
@@ -679,6 +719,39 @@ class ReportView(discord.ui.View):
         if self.demo_mode:
             logger.info("[demo] %s %s", self.payload.fullname, action_text)
 
+    def _log_action_timing(
+        self,
+        interaction: discord.Interaction,
+        action_text: str,
+        *,
+        total_s: float,
+        action_s: float | None = None,
+        refresh_s: float | None = None,
+        update_s: float | None = None,
+        refresh_failed: bool = False,
+    ) -> None:
+        user = interaction.user
+        actor = user.display_name if isinstance(user, discord.Member) else str(user)
+        stamp = datetime.now(tz=timezone.utc).strftime("%H:%M UTC")
+        parts = [f"total={_format_duration(total_s)}"]
+        if action_s is not None:
+            parts.append(f"action={_format_duration(action_s)}")
+        if refresh_s is not None:
+            parts.append(f"refresh={_format_duration(refresh_s)}")
+        if update_s is not None:
+            parts.append(f"update={_format_duration(update_s)}")
+        if refresh_failed:
+            parts.append("refresh_failed")
+        logger.info(
+            "Audit Log %s - %s: %s (%s) [r/%s %s]",
+            stamp,
+            actor,
+            action_text,
+            ", ".join(parts),
+            self.payload.subreddit,
+            self.payload.fullname,
+        )
+
     async def _refresh_state(self) -> None:
         state = await self.reddit.refresh_state(self.payload.fullname)
         self.payload.locked = bool(state.get("locked", self.payload.locked))
@@ -691,6 +764,12 @@ class ReportView(discord.ui.View):
         if isinstance(raw_num_reports, (int, float, str)):
             try:
                 self.payload.num_reports = int(raw_num_reports)
+            except ValueError:
+                pass
+        raw_num_comments = state.get("num_comments", self.payload.num_comments)
+        if isinstance(raw_num_comments, (int, float, str)):
+            try:
+                self.payload.num_comments = int(raw_num_comments)
             except ValueError:
                 pass
         self._update_toggle_labels()
@@ -718,13 +797,34 @@ class ReportView(discord.ui.View):
         interaction: discord.Interaction,
         ref: MessageRef,
         action_text: str,
+        *,
+        action_duration_s: float | None = None,
     ) -> None:
+        total_start = time.monotonic()
         self._append_action(interaction, action_text)
+        refresh_start = time.monotonic()
+        refresh_failed = False
         try:
             await self._refresh_state()
         except Exception:
+            refresh_failed = True
             logger.exception("Failed to refresh Reddit state after modal action")
+        refresh_s = time.monotonic() - refresh_start
+        update_start = time.monotonic()
         await self._apply_message_update(interaction, ref)
+        update_s = time.monotonic() - update_start
+        total_s = time.monotonic() - total_start
+        if action_duration_s is not None:
+            total_s += action_duration_s
+        self._log_action_timing(
+            interaction,
+            action_text,
+            total_s=total_s,
+            action_s=action_duration_s,
+            refresh_s=refresh_s,
+            update_s=update_s,
+            refresh_failed=refresh_failed,
+        )
         await interaction.followup.send(f"Done: {action_text}", ephemeral=True)
 
     async def _run_button_action(
@@ -746,6 +846,8 @@ class ReportView(discord.ui.View):
             return
 
         await interaction.response.defer(ephemeral=True, thinking=True)
+        total_start = time.monotonic()
+        action_start = time.monotonic()
         try:
             await action_coro()
             if mark_reviewed:
@@ -754,13 +856,30 @@ class ReportView(discord.ui.View):
             logger.exception("Action failed: %s", action_text)
             await interaction.followup.send(f"Action failed: {exc}", ephemeral=True)
             return
+        action_s = time.monotonic() - action_start
 
         self._append_action(interaction, action_text)
+        refresh_start = time.monotonic()
+        refresh_failed = False
         try:
             await self._refresh_state()
         except Exception:
+            refresh_failed = True
             logger.exception("Failed to refresh Reddit state after action")
+        refresh_s = time.monotonic() - refresh_start
+        update_start = time.monotonic()
         await self._apply_message_update(interaction, ref)
+        update_s = time.monotonic() - update_start
+        total_s = time.monotonic() - total_start
+        self._log_action_timing(
+            interaction,
+            action_text,
+            total_s=total_s,
+            action_s=action_s,
+            refresh_s=refresh_s,
+            update_s=update_s,
+            refresh_failed=refresh_failed,
+        )
         await interaction.followup.send(f"Done: {action_text}", ephemeral=True)
 
     @discord.ui.button(
@@ -838,14 +957,30 @@ class ReportView(discord.ui.View):
 
         if self.demo_mode:
             self._append_action(interaction, "marked handled (demo)")
+            start = time.monotonic()
             await interaction.response.defer(ephemeral=True, thinking=False)
             await self._apply_message_update(interaction, ref)
+            total_s = time.monotonic() - start
+            self._log_action_timing(
+                interaction,
+                "marked handled (demo)",
+                total_s=total_s,
+                update_s=total_s,
+            )
             await interaction.followup.send("Logged (demo).", ephemeral=True)
             return
 
         self.payload.handled = True
         self._append_action(interaction, "marked handled")
         self._disable_actions()
+        start = time.monotonic()
         await interaction.response.defer(ephemeral=True, thinking=False)
         await self._apply_message_update(interaction, ref)
+        total_s = time.monotonic() - start
+        self._log_action_timing(
+            interaction,
+            "marked handled",
+            total_s=total_s,
+            update_s=total_s,
+        )
         await interaction.followup.send("Marked handled.", ephemeral=True)
