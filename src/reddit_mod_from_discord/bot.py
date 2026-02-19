@@ -418,10 +418,32 @@ class RedditModBot(discord.Client):
         max_age_s = settings.max_item_age_hours * 3600
         return (time.time() - payload.created_utc) <= max_age_s
 
-    def _should_fetch_modlog(self, payload: ReportViewPayload, settings: ResolvedSettings) -> bool:
-        if settings.modlog_fetch_limit <= 0:
-            return False
-        return payload.approved or payload.removed or payload.reports_ignored or payload.locked
+    async def _refresh_modlog_cache(self, runtime: SetupRuntime) -> None:
+        if self.settings.demo_mode:
+            return
+        if runtime.settings.modlog_fetch_limit <= 0:
+            return
+        if not runtime.settings.reddit_subreddit:
+            return
+        try:
+            last_seen = await self.store.get_modlog_state(runtime.setup_id)
+            entries = await runtime.reddit.fetch_recent_modlog_entries(
+                runtime.settings.reddit_subreddit,
+                limit=runtime.settings.modlog_fetch_limit,
+                min_created_utc=last_seen,
+            )
+            if entries:
+                await self.store.save_modlog_entries(runtime.setup_id, entries)
+                newest = max(entry[1] for entry in entries if entry[1])
+                if newest:
+                    await self.store.update_modlog_state(runtime.setup_id, newest)
+            if runtime.settings.modlog_max_age_days > 0:
+                await self.store.prune_modlog_entries(
+                    runtime.setup_id,
+                    runtime.settings.modlog_max_age_days * 86400,
+                )
+        except Exception:
+            logger.exception("Failed to refresh modlog cache for %s", runtime.setup_id)
 
     async def _poll_loop(self, guild: discord.Guild, runtime: SetupRuntime) -> None:
         await asyncio.sleep(2)
@@ -449,6 +471,8 @@ class RedditModBot(discord.Client):
                 )
                 return 0
 
+            await self._refresh_modlog_cache(runtime)
+
             try:
                 reports = await runtime.reddit.fetch_reports()
             except Exception:
@@ -470,27 +494,23 @@ class RedditModBot(discord.Client):
                     await self._update_existing_alert(guild, runtime, report)
                     continue
 
-                if (
-                    not self.settings.demo_mode
-                    and runtime.settings.reddit_subreddit
-                    and self._should_fetch_modlog(payload, runtime.settings)
-                ):
+                if runtime.settings.modlog_fetch_limit > 0:
                     try:
                         max_age_s = (
-                            runtime.settings.max_item_age_hours * 3600
-                            if runtime.settings.max_item_age_hours > 0
+                            runtime.settings.modlog_max_age_days * 86400
+                            if runtime.settings.modlog_max_age_days > 0
                             else None
                         )
-                        history = await runtime.reddit.fetch_modlog_entries(
-                            runtime.settings.reddit_subreddit,
+                        history = await self.store.list_modlog_entries(
+                            runtime.setup_id,
                             payload.fullname,
-                            limit=runtime.settings.modlog_fetch_limit,
                             max_age_s=max_age_s,
+                            limit=runtime.settings.modlog_fetch_limit,
                         )
                         if history:
                             payload.action_log.extend(history)
                     except Exception:
-                        logger.exception("Failed to fetch modlog entries for %s", payload.fullname)
+                        logger.exception("Failed to load modlog cache for %s", payload.fullname)
 
                 view = ReportView(
                     payload=payload,

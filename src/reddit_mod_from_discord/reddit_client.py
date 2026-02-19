@@ -64,14 +64,13 @@ class RedditApi(Protocol):
         public_as_subreddit: bool,
     ) -> None: ...
 
-    async def fetch_modlog_entries(
+    async def fetch_recent_modlog_entries(
         self,
         subreddit_name: str,
-        fullname: str,
         *,
         limit: int,
-        max_age_s: float | None = None,
-    ) -> list[str]: ...
+        min_created_utc: float | None = None,
+    ) -> list[tuple[str, float, str]]: ...
 
 
 def _squash_whitespace(text: str) -> str:
@@ -535,43 +534,44 @@ class RedditService:
             extra = f" ({details})"
         return f"modlog: {action_name} by u/{mod_name} at {stamp}{extra}"
 
-    def _fetch_modlog_entries_sync(
+    def _fetch_recent_modlog_entries_sync(
         self,
         subreddit_name: str,
-        fullname: str,
         *,
         limit: int,
-        max_age_s: float | None = None,
-    ) -> list[str]:
+        min_created_utc: float | None = None,
+    ) -> list[tuple[str, float, str]]:
         subreddit = self._reddit.subreddit(subreddit_name)
-        now = time.time()
-        entries: list[str] = []
+        entries: list[tuple[str, float, str]] = []
         for action in subreddit.mod.log(limit=limit):
-            target_fullname = getattr(action, "target_fullname", None)
-            if target_fullname != fullname:
-                continue
             created_raw = getattr(action, "created_utc", None)
-            if isinstance(created_raw, (int, float)) and max_age_s:
-                if now - float(created_raw) > max_age_s:
-                    continue
-            entries.append(self._format_modlog_entry(action))
-        entries.reverse()
+            if isinstance(created_raw, (int, float)):
+                created_utc = float(created_raw)
+            else:
+                created_utc = 0.0
+            if min_created_utc is not None and created_utc and created_utc < min_created_utc:
+                break
+            target_fullname = getattr(action, "target_fullname", None)
+            if not isinstance(target_fullname, str) or not target_fullname:
+                continue
+            if not target_fullname.startswith(("t1_", "t3_")):
+                continue
+            line = self._format_modlog_entry(action)
+            entries.append((target_fullname, created_utc, line))
         return entries
 
-    async def fetch_modlog_entries(
+    async def fetch_recent_modlog_entries(
         self,
         subreddit_name: str,
-        fullname: str,
         *,
         limit: int,
-        max_age_s: float | None = None,
-    ) -> list[str]:
+        min_created_utc: float | None = None,
+    ) -> list[tuple[str, float, str]]:
         return await self._run(
-            self._fetch_modlog_entries_sync,
+            self._fetch_recent_modlog_entries_sync,
             subreddit_name,
-            fullname,
             limit,
-            max_age_s=max_age_s,
+            min_created_utc=min_created_utc,
         )
 
     def _test_auth_sync(self) -> str:
@@ -675,14 +675,13 @@ class DemoRedditService:
     ) -> None:
         return None
 
-    async def fetch_modlog_entries(
+    async def fetch_recent_modlog_entries(
         self,
         subreddit_name: str,
-        fullname: str,
         *,
         limit: int,
-        max_age_s: float | None = None,
-    ) -> list[str]:
+        min_created_utc: float | None = None,
+    ) -> list[tuple[str, float, str]]:
         return []
 
 
