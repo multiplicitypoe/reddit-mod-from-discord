@@ -711,6 +711,30 @@ class RedditModBot(discord.Client):
                 payload.num_reports = max(0, int(raw))
                 changed = True
 
+        if runtime.settings.modlog_fetch_limit > 0:
+            try:
+                max_age_s = (
+                    runtime.settings.modlog_max_age_days * 86400
+                    if runtime.settings.modlog_max_age_days > 0
+                    else None
+                )
+                history = await self.store.list_modlog_entries(
+                    runtime.setup_id,
+                    payload.fullname,
+                    max_age_s=max_age_s,
+                    limit=runtime.settings.modlog_fetch_limit,
+                )
+                if history:
+                    existing = set(payload.action_log)
+                    for line in history:
+                        if line in existing:
+                            continue
+                        payload.action_log.append(line)
+                        existing.add(line)
+                        changed = True
+            except Exception:
+                logger.exception("Failed to load modlog cache for %s", payload.fullname)
+
         if not changed:
             return
 
