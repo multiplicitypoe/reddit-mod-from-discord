@@ -162,8 +162,24 @@ class RedditService:
         return lines, total
 
     async def _run(self, fn, *args, **kwargs):
+        start = time.monotonic()
         async with self._lock:
-            return await asyncio.to_thread(fn, *args, **kwargs)
+            waited_s = time.monotonic() - start
+            exec_start = time.monotonic()
+            result = await asyncio.to_thread(fn, *args, **kwargs)
+            exec_s = time.monotonic() - exec_start
+        total_s = time.monotonic() - start
+        if total_s >= 5 or waited_s >= 5 or exec_s >= 5:
+            fn_name = getattr(fn, "__name__", "unknown")
+            logger.info(
+                "Reddit API slow call %s wait=%.2fs exec=%.2fs total=%.2fs subreddit=r/%s",
+                fn_name,
+                waited_s,
+                exec_s,
+                total_s,
+                self.settings.reddit_subreddit or "unknown",
+            )
+        return result
 
     def _thing_from_fullname(self, fullname: str) -> Comment | Submission:
         prefix, _, thing_id = fullname.partition("_")
