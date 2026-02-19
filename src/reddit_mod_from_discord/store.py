@@ -259,7 +259,7 @@ class BotStore:
                 ON av.message_id = ri.discord_message_id
             WHERE
                 ri.setup_id = ?
-                ri.handled = 0
+                AND ri.handled = 0
                 AND ri.discord_message_id IS NOT NULL
                 AND ri.discord_channel_id IS NOT NULL
             ORDER BY ri.last_seen_at DESC
