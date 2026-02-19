@@ -89,10 +89,15 @@ stop-docker:
 	fi
 
 run-docker: ensure-env ensure-data stop-docker
+	@config_mount=""; \
+	if [ -f "$(CURDIR)/multi_server_config.json" ]; then \
+		config_mount="-v $(CURDIR)/multi_server_config.json:/app/multi_server_config.json:ro"; \
+	fi; \
 	$(DOCKER) run --rm \
 		--name "$(CONTAINER)" \
 		--env-file "$(CURDIR)/.env" \
 		-v "$(CURDIR)/data:/app/data" \
+		$$config_mount \
 		--read-only \
 		--tmpfs /tmp:rw,noexec,nosuid,nodev \
 		--cap-drop ALL \

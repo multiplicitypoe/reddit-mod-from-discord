@@ -130,7 +130,7 @@ If `REDDIT_REFRESH_TOKEN` is set, it takes precedence.
 
 If you run one bot instance across multiple Discord servers (or multiple subreddits within the same server), you can provide per-setup overrides in a JSON file and point to it with `MULTI_SERVER_CONFIG_PATH`. This is optional; single-server setup with `.env` is still the recommended path.
 
-`cp multi_server_config.json.example multi_server_config.json`, and then in your `.env`, edit it to point at it:
+`cp multi_server_config.json.example multi_server_config.json`, and then in your `.env`, edit it to point at it. `make run-docker` will automatically mount the file if it exists:
 
 ```bash
 MULTI_SERVER_CONFIG_PATH=multi_server_config.json
