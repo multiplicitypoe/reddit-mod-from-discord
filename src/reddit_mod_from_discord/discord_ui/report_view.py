@@ -4,7 +4,8 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import discord
 
@@ -18,6 +19,7 @@ logger = logging.getLogger("reddit_mod_from_discord")
 
 _BAN_REASON_API_MAX = 100
 _BAN_NOTE_API_MAX = 300
+_DISPLAY_TZ = ZoneInfo("America/Los_Angeles")
 
 
 def _truncate(text: str, max_len: int) -> str:
@@ -53,6 +55,97 @@ _LEGACY_REPORT_LINE_RE = re.compile(
     r"""^\s*[\[(]\s*['"]?(?P<reason>.+?)['"]?\s*,\s*(?P<count>-?\d+)\s*[\])]\s*$"""
 )
 _MARKDOWN_LINK_RE = re.compile(r"\[(?P<label>[^\]]+)\]\((?P<url>[^)]+)\)")
+_UTC_STAMP_WITH_DATE_RE = re.compile(
+    r"^(?P<date>\d{4}-\d{2}-\d{2}) (?P<hour>\d{2}):(?P<minute>\d{2}) UTC - (?P<rest>.+)$"
+)
+_UTC_STAMP_NO_DATE_RE = re.compile(
+    r"^(?P<hour>\d{2}):(?P<minute>\d{2}) UTC - (?P<rest>.+)$"
+)
+_LOCAL_STAMP_RE = re.compile(
+    r"^(?P<hour>\d{2}):(?P<minute>\d{2}) (?P<tz>PST|PDT) - (?P<rest>.+)$"
+)
+_MODLOG_ACTION_RE = re.compile(r"^u/(?P<mod>[^:]+): (?P<action>.+)$")
+_CONFIRM_SUFFIX_RE = re.compile(r"\s*\((confirm_ham|confirm_spam)\)\s*$")
+
+
+def _format_local_hhmm(ts: float) -> str:
+    dt = datetime.fromtimestamp(ts, tz=timezone.utc).astimezone(_DISPLAY_TZ)
+    return dt.strftime("%H:%M %Z")
+
+
+def _normalize_modlog_action_text(action_text: str) -> str:
+    # Strip internal marker and noisy confirm_* details.
+    text = str(action_text).replace("[modlog]", "").strip()
+    text = _CONFIRM_SUFFIX_RE.sub("", text).strip()
+    lowered = text.lower()
+    mapping = {
+        "approvelink": "approved",
+        "approvecomment": "approved",
+        "removecomment": "removed",
+        "removelink": "removed",
+        "spamcomment": "removed as spam",
+        "spamlink": "removed as spam",
+        "lock": "locked",
+        "unlock": "unlocked",
+        "ignorereports": "ignored reports",
+        "unignorereports": "unignored reports",
+    }
+    if lowered in mapping:
+        return mapping[lowered]
+    return text
+
+
+def _normalize_audit_log_entry(line: str) -> str:
+    """
+    Normalize stored audit log lines for display:
+    - Always render timestamp as HH:MM PST/PDT.
+    - Collapse modlog entries into a similar shape as in-bot actions.
+    """
+    raw = str(line).strip()
+    if not raw:
+        return raw
+
+    local_match = _LOCAL_STAMP_RE.match(raw)
+    if local_match is not None:
+        # Already in desired time format.
+        return raw
+
+    now_utc = datetime.now(tz=timezone.utc)
+
+    match = _UTC_STAMP_WITH_DATE_RE.match(raw)
+    if match is not None:
+        dt_utc = datetime.strptime(
+            f"{match.group('date')} {match.group('hour')}:{match.group('minute')}",
+            "%Y-%m-%d %H:%M",
+        ).replace(tzinfo=timezone.utc)
+        stamp = _format_local_hhmm(dt_utc.timestamp())
+        rest = match.group("rest").strip()
+    else:
+        match = _UTC_STAMP_NO_DATE_RE.match(raw)
+        if match is None:
+            return raw
+        hour = int(match.group("hour"))
+        minute = int(match.group("minute"))
+        candidates: list[datetime] = []
+        for day_offset in (0, -1, 1):
+            dt = (now_utc + timedelta(days=day_offset)).replace(
+                hour=hour, minute=minute, second=0, microsecond=0
+            )
+            candidates.append(dt)
+        dt_utc = min(candidates, key=lambda dt: abs((now_utc - dt).total_seconds()))
+        stamp = _format_local_hhmm(dt_utc.timestamp())
+        rest = match.group("rest").strip()
+
+    # If the remainder looks like a modlog action, normalize its action name and drop confirm_*.
+    modlog_match = _MODLOG_ACTION_RE.match(rest)
+    if modlog_match is not None:
+        mod = modlog_match.group("mod").strip()
+        action_text = modlog_match.group("action").strip()
+        action_text = _normalize_modlog_action_text(action_text)
+        return f"{stamp} - u/{mod}: {action_text}"
+
+    # Otherwise, keep the message content but render local timestamp.
+    return f"{stamp} - {rest}"
 
 
 def _escape_discord_text(text: str) -> str:
@@ -223,7 +316,10 @@ def build_report_embed(payload: ReportViewPayload) -> discord.Embed:
     )
 
     if payload.action_log:
-        escaped_audit = [_format_audit_log_line(line) for line in payload.action_log[-10:]]
+        normalized_audit = [
+            _normalize_audit_log_entry(line) for line in payload.action_log[-10:]
+        ]
+        escaped_audit = [_format_audit_log_line(line) for line in normalized_audit]
         embed.add_field(
             name="Audit Log",
             value=_truncate("\n".join(f"- {line}" for line in escaped_audit), 1024),
@@ -719,7 +815,7 @@ class ReportView(discord.ui.View):
     def _append_action(self, interaction: discord.Interaction, action_text: str) -> None:
         user = interaction.user
         actor = user.display_name if isinstance(user, discord.Member) else str(user)
-        stamp = datetime.now(tz=timezone.utc).strftime("%H:%M UTC")
+        stamp = datetime.now(tz=_DISPLAY_TZ).strftime("%H:%M %Z")
         self.payload.action_log.append(f"{stamp} - {actor}: {action_text}")
         if self.demo_mode:
             logger.info("[demo] %s %s", self.payload.fullname, action_text)
@@ -737,7 +833,7 @@ class ReportView(discord.ui.View):
     ) -> None:
         user = interaction.user
         actor = user.display_name if isinstance(user, discord.Member) else str(user)
-        stamp = datetime.now(tz=timezone.utc).strftime("%H:%M UTC")
+        stamp = datetime.now(tz=_DISPLAY_TZ).strftime("%H:%M %Z")
         parts = [f"total={_format_duration(total_s)}"]
         if action_s is not None:
             parts.append(f"action={_format_duration(action_s)}")
