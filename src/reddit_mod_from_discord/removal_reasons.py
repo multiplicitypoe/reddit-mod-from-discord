@@ -179,10 +179,14 @@ def render_removal_message(
 
         parts: list[str] = []
         parts.append(f"Regarding your {thing} to /r/{subreddit}:")
-        if title.strip():
-            parts.append(title.strip())
-        if url.strip():
-            parts.append(url.strip())
+        title_line = title.strip()
+        url_line = url.strip()
+        if title_line and url_line:
+            parts.append(f"{title_line} ({url_line})")
+        elif title_line:
+            parts.append(title_line)
+        elif url_line:
+            parts.append(url_line)
 
         parts.append(
             f"This {thing} has been removed by a moderator for breaking the following /r/{subreddit} rule:"
