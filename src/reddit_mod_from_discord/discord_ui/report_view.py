@@ -678,6 +678,11 @@ class RemovalReasonPickerView(discord.ui.View):
             self.open_button.disabled = True
             self.back_button.disabled = True
 
+        # On the preview screen, paging is confusing; require going "Back to list" first.
+        if self.selected_index is not None:
+            self.prev_button.disabled = True
+            self.next_button.disabled = True
+
         self.prev_button.label = "Prev page"
         self.next_button.label = "Next page"
         self.back_button.label = "Back to list"
