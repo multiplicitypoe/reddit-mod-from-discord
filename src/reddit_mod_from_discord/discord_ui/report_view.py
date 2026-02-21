@@ -678,6 +678,15 @@ class RemovalReasonPickerView(discord.ui.View):
             self.open_button.disabled = True
             self.back_button.disabled = True
 
+        self.prev_button.label = "Prev page"
+        self.next_button.label = "Next page"
+        self.back_button.label = "Back to list"
+
+    def _disable_all(self) -> None:
+        for child in self.children:
+            if isinstance(child, (discord.ui.Button, discord.ui.Select)):
+                child.disabled = True
+
     def build_options(self) -> list[discord.SelectOption]:
         start = self.page * self.page_size
         end = min(len(self.reasons), start + self.page_size)
@@ -752,7 +761,7 @@ class RemovalReasonPickerView(discord.ui.View):
         )
         await interaction.response.edit_message(embed=view.build_embed(), view=view)
 
-    @discord.ui.button(label="Prev", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Prev page", style=discord.ButtonStyle.secondary)
     async def prev_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         if not await self.report_view._ensure_mod(interaction):
             return
@@ -769,7 +778,7 @@ class RemovalReasonPickerView(discord.ui.View):
         )
         await interaction.response.edit_message(embed=view.build_embed(), view=view)
 
-    @discord.ui.button(label="Next", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Next page", style=discord.ButtonStyle.secondary)
     async def next_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         if not await self.report_view._ensure_mod(interaction):
             return
@@ -786,7 +795,7 @@ class RemovalReasonPickerView(discord.ui.View):
         )
         await interaction.response.edit_message(embed=view.build_embed(), view=view)
 
-    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Back to list", style=discord.ButtonStyle.secondary)
     async def back_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         if not await self.report_view._ensure_mod(interaction):
             return
@@ -800,7 +809,7 @@ class RemovalReasonPickerView(discord.ui.View):
         )
         await interaction.response.edit_message(embed=view.build_embed(), view=view)
 
-    @discord.ui.button(label="Open", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="Send", style=discord.ButtonStyle.success)
     async def open_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         if not await self.report_view._ensure_mod(interaction):
             return
@@ -826,6 +835,17 @@ class RemovalReasonPickerView(discord.ui.View):
                 default_body=reason.text,
             )
         await interaction.response.send_modal(modal)
+
+        # Best-effort cleanup: disable the picker UI once the modal is opened to avoid
+        # leaving interactive controls behind in the ephemeral message.
+        try:
+            if interaction.message is not None:
+                self._disable_all()
+                embed = self.build_embed()
+                embed.set_footer(text="Modal opened. Submit it to send.")
+                await interaction.message.edit(embed=embed, view=self)
+        except Exception:
+            pass
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         if not await self._view.ensure_mod_from_modal(interaction):
