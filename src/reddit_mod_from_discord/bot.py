@@ -30,6 +30,7 @@ class SetupRuntime:
     reddit: RedditService | DemoRedditService
     allowed_role_ids: set[int]
     poll_task: asyncio.Task[None] | None
+    warm_task: asyncio.Task[None] | None
     poll_lock: asyncio.Lock
     modlog_disabled: bool = False
 
@@ -75,6 +76,26 @@ class RedditModBot(discord.Client):
             if guild is None:
                 continue
             runtime.poll_task = asyncio.create_task(self._poll_loop(guild, runtime))
+            runtime.warm_task = asyncio.create_task(self._warm_removal_reasons_loop(runtime))
+
+    async def _warm_removal_reasons_loop(self, runtime: SetupRuntime) -> None:
+        # Keep this out of the poll loop so a slow wiki/rules fetch doesn't block alerting.
+        await asyncio.sleep(2)
+        while not self.is_closed():
+            try:
+                subreddit = runtime.settings.reddit_subreddit or ""
+                if subreddit:
+                    await runtime.reddit.fetch_removal_reasons(subreddit, kind="submission")
+                    await runtime.reddit.fetch_removal_reasons(subreddit, kind="comment")
+                    logger.info(
+                        "Warmed removal reasons cache for setup %s r/%s",
+                        runtime.setup_id,
+                        subreddit,
+                    )
+            except Exception:
+                logger.exception("Failed to warm removal reasons cache for setup %s", runtime.setup_id)
+            # Refresh daily; reasons tend to change rarely.
+            await asyncio.sleep(24 * 3600)
 
     async def _post_demo_example(self, guild: discord.Guild, runtime: SetupRuntime) -> None:
         channel = await self._resolve_mod_channel(guild, runtime.settings)
@@ -887,6 +908,7 @@ class RedditModBot(discord.Client):
             reddit=reddit,
             allowed_role_ids=allowed_role_ids,
             poll_task=None,
+            warm_task=None,
             poll_lock=asyncio.Lock(),
         )
 
