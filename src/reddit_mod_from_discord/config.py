@@ -460,7 +460,7 @@ def load_settings() -> Settings:
         post_report_threshold=max(_env_int("POST_REPORT_THRESHOLD", 1), 1),
         comment_report_threshold=max(_env_int("COMMENT_REPORT_THRESHOLD", 1), 1),
         max_reports_per_poll=max(_env_int("MAX_REPORTS_PER_POLL", 100), 1),
-        max_item_age_hours=max(_env_int("MAX_ITEM_AGE_HOURS", 72), 0),
+        max_item_age_hours=max(_env_int("MAX_ITEM_AGE_HOURS", 168), 0),
         modlog_fetch_limit=max(_env_int("MODLOG_FETCH_LIMIT", 100), 0),
         modlog_max_age_days=max(_env_int("MODLOG_MAX_AGE_DAYS", 30), 0),
         db_path=_env("DB_PATH", "data/reddit_mod_from_discord.sqlite3"),
