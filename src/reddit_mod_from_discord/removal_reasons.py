@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import json
 import re
 from dataclasses import dataclass
@@ -50,6 +51,12 @@ def _toolbox_decode(value: str) -> str:
             return m.group(0)
 
     text = _TOOLBOX_UNICODE_RE.sub(_replace, text)
+    # Some exports include HTML entities (often double-encoded); unescape a few times to improve readability.
+    for _ in range(3):
+        next_text = html.unescape(text)
+        if next_text == text:
+            break
+        text = next_text
     return text
 
 
@@ -176,4 +183,3 @@ def render_removal_message(
 
     message = "\n\n".join(part.strip() for part in parts if part and part.strip())
     return message.strip()
-
