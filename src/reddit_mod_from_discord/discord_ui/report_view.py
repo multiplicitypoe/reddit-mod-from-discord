@@ -488,7 +488,7 @@ class RemovalMessageModal(discord.ui.Modal, title="Removal Message"):
         await self._view.complete_modal_action(
             interaction,
             self._message_ref,
-            "sent removal message as subreddit",
+            "removed + sent removal message as subreddit",
             action_duration_s=action_s,
         )
 
