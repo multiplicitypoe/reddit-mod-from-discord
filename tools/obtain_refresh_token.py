@@ -38,14 +38,22 @@ def main() -> int:
         print("REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET must be set in env.")
         return 2
 
-    default_scopes = ["modlog", "modposts", "modmail", "modcontributors", "read", "identity"]
+    default_scopes = [
+        "modlog",
+        "modposts",
+        "modmail",
+        "modcontributors",
+        "wikiread",
+        "read",
+        "identity",
+    ]
 
     if scopes_raw:
         scopes = [scope.strip() for scope in scopes_raw.split(",") if scope.strip()]
     else:
         scopes_input = input(
             "Enter comma-separated scopes (press Enter or 'y' for default: "
-            "modlog,modposts,modmail,modcontributors,read,identity), or '*' for all: "
+            "modlog,modposts,modmail,modcontributors,wikiread,read,identity), or '*' for all: "
         ).strip()
         if not scopes_input or scopes_input.lower() in {"y", "yes"}:
             scopes = list(default_scopes)

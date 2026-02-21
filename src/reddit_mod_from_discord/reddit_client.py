@@ -10,12 +10,15 @@ from datetime import datetime, timezone
 from typing import Protocol
 
 import praw
+import prawcore
 from praw.models import Comment, Submission
 
 from dotenv import load_dotenv
 
 from reddit_mod_from_discord.config import ResolvedSettings, Settings, load_settings, resolve_settings
 from reddit_mod_from_discord.models import ReportedItem
+from reddit_mod_from_discord.models import ThingKind
+from reddit_mod_from_discord.removal_reasons import RemovalReasonSet, parse_subreddit_rules, parse_toolbox_wiki_payload
 from reddit_mod_from_discord.safety import sanitize_http_url
 
 logger = logging.getLogger("reddit_mod_from_discord")
@@ -63,6 +66,13 @@ class RedditApi(Protocol):
         mod_note: str,
         public_as_subreddit: bool,
     ) -> None: ...
+
+    async def fetch_removal_reasons(
+        self,
+        subreddit_name: str,
+        *,
+        kind: ThingKind,
+    ) -> RemovalReasonSet: ...
 
     async def fetch_recent_modlog_entries(
         self,
@@ -122,6 +132,7 @@ class RedditService:
             )
         self._lock = asyncio.Lock()
         self._bot_username: str | None = None
+        self._removal_reasons_cache: dict[tuple[str, str], tuple[float, RemovalReasonSet]] = {}
 
     @staticmethod
     def _validate_thing_id(thing_id: str) -> str:
@@ -542,6 +553,84 @@ class RedditService:
     async def refresh_state(self, fullname: str) -> dict[str, object]:
         return await self._run(self._refresh_state_sync, fullname)
 
+    def _fetch_toolbox_wiki_sync(self, subreddit_name: str) -> str | None:
+        subreddit = self._reddit.subreddit(subreddit_name)
+        try:
+            page = subreddit.wiki["toolbox"]
+        except Exception:
+            return None
+        content = getattr(page, "content_md", None)
+        if isinstance(content, str) and content.strip():
+            return content
+        return None
+
+    def _fetch_subreddit_rules_sync(self, subreddit_name: str) -> list[dict[str, str | None]]:
+        subreddit = self._reddit.subreddit(subreddit_name)
+        out: list[dict[str, str | None]] = []
+        try:
+            rules = subreddit.rules
+        except Exception:
+            return out
+        for rule in rules:
+            short = getattr(rule, "short_name", None)
+            desc = getattr(rule, "description", None)
+            out.append(
+                {
+                    "short_name": str(short) if short is not None else None,
+                    "description": str(desc) if desc is not None else None,
+                }
+            )
+        return out
+
+    async def fetch_removal_reasons(
+        self,
+        subreddit_name: str,
+        *,
+        kind: ThingKind,
+    ) -> RemovalReasonSet:
+        normalized = (subreddit_name or "").strip() or (self.settings.reddit_subreddit or "")
+        normalized = normalized.strip()
+        cache_key = (normalized.lower(), kind)
+        now = time.time()
+        cached = self._removal_reasons_cache.get(cache_key)
+        if cached is not None and cached[0] > now:
+            return cached[1]
+
+        ttl_ok_s = 6 * 3600
+        ttl_fail_s = 10 * 60
+
+        toolbox_raw: str | None = None
+        try:
+            toolbox_raw = await self._run(self._fetch_toolbox_wiki_sync, normalized)
+        except prawcore.exceptions.InsufficientScope:
+            toolbox_raw = None
+        except prawcore.exceptions.Forbidden:
+            toolbox_raw = None
+        except prawcore.exceptions.NotFound:
+            toolbox_raw = None
+        except Exception:
+            toolbox_raw = None
+
+        if toolbox_raw:
+            parsed = parse_toolbox_wiki_payload(toolbox_raw, kind=kind)
+            if parsed is not None:
+                self._removal_reasons_cache[cache_key] = (now + ttl_ok_s, parsed)
+                return parsed
+
+        rules_raw: list[dict[str, str | None]] = []
+        try:
+            rules_raw = await self._run(self._fetch_subreddit_rules_sync, normalized)
+        except Exception:
+            rules_raw = []
+        parsed_rules = parse_subreddit_rules(rules_raw, kind=kind)
+        if parsed_rules is not None:
+            self._removal_reasons_cache[cache_key] = (now + ttl_ok_s, parsed_rules)
+            return parsed_rules
+
+        empty = RemovalReasonSet(source="none", header="", footer="", reasons=[])
+        self._removal_reasons_cache[cache_key] = (now + ttl_fail_s, empty)
+        return empty
+
     def _format_modlog_entry(self, action) -> str:
         action_name = str(getattr(action, "action", "") or "unknown")
         mod = getattr(action, "mod", None)
@@ -727,6 +816,14 @@ class DemoRedditService:
         public_as_subreddit: bool,
     ) -> None:
         return None
+
+    async def fetch_removal_reasons(
+        self,
+        subreddit_name: str,
+        *,
+        kind: ThingKind,
+    ) -> RemovalReasonSet:
+        return RemovalReasonSet(source="none", header="", footer="", reasons=[])
 
     async def fetch_recent_modlog_entries(
         self,

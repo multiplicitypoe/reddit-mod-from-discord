@@ -12,6 +12,7 @@ import discord
 from reddit_mod_from_discord.models import ReportViewPayload
 from reddit_mod_from_discord.permissions import is_allowed_moderator
 from reddit_mod_from_discord.reddit_client import RedditApi
+from reddit_mod_from_discord.removal_reasons import RemovalReason, RemovalReasonSet, render_removal_message
 from reddit_mod_from_discord.safety import sanitize_http_url
 from reddit_mod_from_discord.store import BotStore, ViewRecord
 
@@ -440,10 +441,24 @@ class RemovalMessageModal(discord.ui.Modal, title="Removal Message"):
         max_length=4000,
     )
 
-    def __init__(self, view: "ReportView", message_ref: MessageRef) -> None:
+    def __init__(
+        self,
+        view: "ReportView",
+        message_ref: MessageRef,
+        *,
+        default_title: str | None = None,
+        default_mod_note: str | None = None,
+        default_body: str | None = None,
+    ) -> None:
         super().__init__()
         self._view = view
         self._message_ref = message_ref
+        if default_title is not None:
+            self.title_text.default = str(default_title)[:100]
+        if default_mod_note is not None:
+            self.mod_note.default = str(default_mod_note)[:250]
+        if default_body is not None:
+            self.body.default = str(default_body)[:4000]
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         if not await self._view.ensure_mod_from_modal(interaction):
@@ -571,10 +586,319 @@ class ReplyModal(discord.ui.Modal, title="Reply"):
         max_length=4000,
     )
 
-    def __init__(self, view: "ReportView", message_ref: MessageRef) -> None:
+    def __init__(
+        self,
+        view: "ReportView",
+        message_ref: MessageRef,
+        *,
+        default_remove_first: str | None = None,
+        default_sticky: str | None = None,
+        default_lock: str | None = None,
+        default_body: str | None = None,
+    ) -> None:
         super().__init__()
         self._view = view
         self._message_ref = message_ref
+        if default_remove_first is not None:
+            self.remove_first.default = str(default_remove_first)[:1]
+        if default_sticky is not None:
+            self.sticky.default = str(default_sticky)[:1]
+        if default_lock is not None:
+            self.lock.default = str(default_lock)[:1]
+        if default_body is not None:
+            self.body.default = str(default_body)[:4000]
+
+
+def _truncate_select_label(text: str, max_len: int = 100) -> str:
+    text = str(text)
+    if len(text) <= max_len:
+        return text
+    return text[: max(0, max_len - 3)] + "..."
+
+
+class ReasonKeyModal(discord.ui.Modal, title="Find Removal Reason"):
+    query = discord.ui.TextInput(
+        label="Reason key or search",
+        placeholder="e.g. 1a, 4, leaks, hot topic",
+        required=True,
+        max_length=64,
+    )
+
+    def __init__(self, picker: "RemovalReasonPickerView") -> None:
+        super().__init__()
+        self._picker = picker
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        if not await self._picker.report_view._ensure_mod(interaction):
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        query = str(self.query.value or "").strip()
+        await self._picker.respond_for_query(interaction, query)
+
+
+class RemovalReasonSelect(discord.ui.Select):
+    def __init__(self, picker: "RemovalReasonPickerView") -> None:
+        self._picker = picker
+        options = picker.build_options()
+        super().__init__(
+            placeholder="Select a removal reason…",
+            min_values=1,
+            max_values=1,
+            options=options,
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if not await self._picker.report_view._ensure_mod(interaction):
+            return
+        value = self.values[0]
+        try:
+            idx = int(value)
+        except Exception:
+            await interaction.response.send_message("Invalid selection.", ephemeral=True)
+            return
+        await self._picker.select_index(interaction, idx)
+
+
+class RemovalReasonPickerView(discord.ui.View):
+    def __init__(
+        self,
+        *,
+        report_view: "ReportView",
+        message_ref: MessageRef,
+        reason_set: RemovalReasonSet,
+        reasons: list[RemovalReason],
+        selected_index: int | None = None,
+        page: int = 0,
+    ) -> None:
+        super().__init__(timeout=10 * 60)
+        self.report_view = report_view
+        self.message_ref = message_ref
+        self.reason_set = reason_set
+        self.reasons = reasons
+        self.selected_index = selected_index
+        self.page = page
+        self.page_size = 25
+
+        self.select = RemovalReasonSelect(self)
+        if not self.reasons:
+            self.select.disabled = True
+        self.add_item(self.select)
+
+        self.prev_button.disabled = self.page <= 0
+        self.next_button.disabled = (self.page + 1) * self.page_size >= len(self.reasons)
+        self.open_button.disabled = self.selected_index is None
+        self.back_button.disabled = self.selected_index is None
+        if not self.reasons:
+            self.prev_button.disabled = True
+            self.next_button.disabled = True
+            self.open_button.disabled = True
+            self.back_button.disabled = True
+
+    def build_options(self) -> list[discord.SelectOption]:
+        start = self.page * self.page_size
+        end = min(len(self.reasons), start + self.page_size)
+        options: list[discord.SelectOption] = []
+        for idx in range(start, end):
+            reason = self.reasons[idx]
+            label = _truncate_select_label(f"{reason.key} — {reason.title}", 100)
+            options.append(discord.SelectOption(label=label, value=str(idx)))
+        if not options:
+            options.append(discord.SelectOption(label="(no reasons available)", value="-1"))
+        return options
+
+    def _source_label(self) -> str:
+        if self.reason_set.source == "toolbox_wiki":
+            return "Toolbox wiki"
+        if self.reason_set.source == "subreddit_rules":
+            return "Subreddit rules"
+        return "None"
+
+    def build_embed(self) -> discord.Embed:
+        if self.reason_set.source == "none" or not self.reasons:
+            embed = discord.Embed(
+                title="Removal reasons unavailable",
+                description=(
+                    "No removal reasons could be loaded from the toolbox wiki or subreddit rules.\n"
+                    "Use the existing Reply / Removal Message actions with manual text."
+                ),
+                color=discord.Color.orange(),
+            )
+            return embed
+
+        if self.selected_index is None:
+            page_count = max(1, (len(self.reasons) + self.page_size - 1) // self.page_size)
+            embed = discord.Embed(
+                title="Select a removal reason",
+                description=f"Source: {self._source_label()} • Page {self.page + 1}/{page_count}",
+                color=discord.Color.blurple(),
+            )
+            embed.set_footer(text="Tip: use Search/Key to type 1a, 4a, leaks, etc.")
+            return embed
+
+        reason = self.reasons[self.selected_index]
+        payload = self.report_view.payload
+        url = payload.permalink
+        title = payload.title or payload.fullname
+        if payload.kind == "submission":
+            message = render_removal_message(self.reason_set, reason, title=title, url=url)
+        else:
+            message = reason.text
+
+        preview = message.strip()
+        if len(preview) > 3800:
+            preview = preview[:3797] + "..."
+        embed = discord.Embed(
+            title=_truncate_select_label(f"{reason.key} — {reason.title}", 256),
+            description=preview or "(empty reason text)",
+            color=discord.Color.blurple(),
+        )
+        embed.set_footer(text=f"Source: {self._source_label()}")
+        return embed
+
+    async def select_index(self, interaction: discord.Interaction, idx: int) -> None:
+        if idx < 0 or idx >= len(self.reasons):
+            await interaction.response.send_message("Invalid selection.", ephemeral=True)
+            return
+        view = RemovalReasonPickerView(
+            report_view=self.report_view,
+            message_ref=self.message_ref,
+            reason_set=self.reason_set,
+            reasons=self.reasons,
+            selected_index=idx,
+            page=self.page,
+        )
+        await interaction.response.edit_message(embed=view.build_embed(), view=view)
+
+    async def respond_for_query(self, interaction: discord.Interaction, query: str) -> None:
+        cleaned = query.strip().lower()
+        if not cleaned:
+            await interaction.followup.send("Enter a reason key or keyword.", ephemeral=True)
+            return
+
+        exact: list[int] = []
+        prefix: list[int] = []
+        keyword: list[int] = []
+        for idx, reason in enumerate(self.reasons):
+            key = reason.key.lower()
+            title = reason.title.lower()
+            if cleaned == key:
+                exact.append(idx)
+                continue
+            if key.startswith(cleaned):
+                prefix.append(idx)
+                continue
+            if cleaned in title:
+                keyword.append(idx)
+
+        matches = exact or (prefix if len(prefix) <= 25 else []) or keyword
+        if len(matches) == 1:
+            selected = matches[0]
+            view = RemovalReasonPickerView(
+                report_view=self.report_view,
+                message_ref=self.message_ref,
+                reason_set=self.reason_set,
+                reasons=self.reasons,
+                selected_index=selected,
+                page=selected // self.page_size,
+            )
+            await interaction.followup.send(embed=view.build_embed(), view=view, ephemeral=True)
+            return
+
+        if not matches:
+            await interaction.followup.send("No matching reasons found.", ephemeral=True)
+            return
+
+        filtered_reasons = [self.reasons[idx] for idx in matches[:200]]
+        view = RemovalReasonPickerView(
+            report_view=self.report_view,
+            message_ref=self.message_ref,
+            reason_set=self.reason_set,
+            reasons=filtered_reasons,
+            selected_index=None,
+            page=0,
+        )
+        await interaction.followup.send(embed=view.build_embed(), view=view, ephemeral=True)
+
+    @discord.ui.button(label="Prev", style=discord.ButtonStyle.secondary)
+    async def prev_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        if not await self.report_view._ensure_mod(interaction):
+            return
+        if self.page <= 0:
+            await interaction.response.defer(ephemeral=True, thinking=False)
+            return
+        view = RemovalReasonPickerView(
+            report_view=self.report_view,
+            message_ref=self.message_ref,
+            reason_set=self.reason_set,
+            reasons=self.reasons,
+            selected_index=self.selected_index,
+            page=self.page - 1,
+        )
+        await interaction.response.edit_message(embed=view.build_embed(), view=view)
+
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.secondary)
+    async def next_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        if not await self.report_view._ensure_mod(interaction):
+            return
+        if (self.page + 1) * self.page_size >= len(self.reasons):
+            await interaction.response.defer(ephemeral=True, thinking=False)
+            return
+        view = RemovalReasonPickerView(
+            report_view=self.report_view,
+            message_ref=self.message_ref,
+            reason_set=self.reason_set,
+            reasons=self.reasons,
+            selected_index=self.selected_index,
+            page=self.page + 1,
+        )
+        await interaction.response.edit_message(embed=view.build_embed(), view=view)
+
+    @discord.ui.button(label="Search/Key…", style=discord.ButtonStyle.primary)
+    async def search_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        if not await self.report_view._ensure_mod(interaction):
+            return
+        await interaction.response.send_modal(ReasonKeyModal(self))
+
+    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary)
+    async def back_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        if not await self.report_view._ensure_mod(interaction):
+            return
+        view = RemovalReasonPickerView(
+            report_view=self.report_view,
+            message_ref=self.message_ref,
+            reason_set=self.reason_set,
+            reasons=self.reasons,
+            selected_index=None,
+            page=self.page,
+        )
+        await interaction.response.edit_message(embed=view.build_embed(), view=view)
+
+    @discord.ui.button(label="Open", style=discord.ButtonStyle.success)
+    async def open_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        if not await self.report_view._ensure_mod(interaction):
+            return
+        if self.selected_index is None:
+            await interaction.response.send_message("Select a reason first.", ephemeral=True)
+            return
+        reason = self.reasons[self.selected_index]
+        payload = self.report_view.payload
+        url = payload.permalink
+        title = payload.title or payload.fullname
+        if payload.kind == "submission":
+            body = render_removal_message(self.reason_set, reason, title=title, url=url)
+            modal = RemovalMessageModal(
+                self.report_view,
+                self.message_ref,
+                default_title=f"{reason.key} — {reason.title}",
+                default_body=body,
+            )
+        else:
+            modal = ReplyModal(
+                self.report_view,
+                self.message_ref,
+                default_body=reason.text,
+            )
+        await interaction.response.send_modal(modal)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         if not await self._view.ensure_mod_from_modal(interaction):
@@ -634,6 +958,7 @@ class MoreActionsSelect(discord.ui.Select):
     def __init__(self) -> None:
         options = [
             discord.SelectOption(label="Reply", value="reply"),
+            discord.SelectOption(label="Removal reason…", value="removal_reason"),
             discord.SelectOption(label="Modmail", value="modmail"),
             discord.SelectOption(label="Ban user", value="ban"),
             discord.SelectOption(label="Refresh state", value="refresh"),
@@ -670,6 +995,29 @@ class MoreActionsSelect(discord.ui.Select):
             return
         if selected == "reply":
             await interaction.response.send_modal(ReplyModal(view, ref))
+            return
+        if selected == "removal_reason":
+            await interaction.response.defer(ephemeral=True, thinking=True)
+            try:
+                reason_set = await view.reddit.fetch_removal_reasons(
+                    view.payload.subreddit,
+                    kind=view.payload.kind,
+                )
+            except Exception:
+                logger.exception("Failed to load removal reasons")
+                await interaction.followup.send(
+                    "Failed to load removal reasons. Try again or use Reply / Removal Message.",
+                    ephemeral=True,
+                )
+                return
+            reasons = reason_set.applicable_reasons(view.payload.kind)
+            picker = RemovalReasonPickerView(
+                report_view=view,
+                message_ref=ref,
+                reason_set=reason_set,
+                reasons=reasons,
+            )
+            await interaction.followup.send(embed=picker.build_embed(), view=picker, ephemeral=True)
             return
         if selected == "refresh":
             await interaction.response.defer(ephemeral=True, thinking=True)

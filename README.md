@@ -109,6 +109,8 @@ CLEAR_SETUP_ID=pathofexile make clear-history
 
 Actions run as the Reddit account that authorized the refresh token. If you want actions to come from a dedicated mod account, generate the refresh token while logged into that dedicated account.
 
+If you want the Removal reason picker to load Toolbox removal reasons from `/wiki/toolbox`, the refresh token also needs the `wikiread` scope (see the token helper defaults).
+
 ## Obtaining a refresh token
 
 If your account cannot create apps yet: Reddit now requires you to register for API access before creating credentials. See:
