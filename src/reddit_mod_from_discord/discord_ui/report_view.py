@@ -732,9 +732,26 @@ class RemovalReasonPickerView(discord.ui.View):
         url = payload.permalink
         title = payload.title or payload.fullname
         if payload.kind == "submission":
-            message = render_removal_message(self.reason_set, reason, title=title, url=url)
+            message = render_removal_message(
+                self.reason_set,
+                reason,
+                kind=payload.kind,
+                subreddit_name=payload.subreddit,
+                title=title,
+                url=url,
+            )
         else:
-            message = reason.text
+            if self.reason_set.source == "subreddit_rules":
+                message = render_removal_message(
+                    self.reason_set,
+                    reason,
+                    kind=payload.kind,
+                    subreddit_name=payload.subreddit,
+                    title=title,
+                    url=url,
+                )
+            else:
+                message = reason.text
 
         preview = message.strip()
         if len(preview) > 3800:
@@ -821,7 +838,14 @@ class RemovalReasonPickerView(discord.ui.View):
         url = payload.permalink
         title = payload.title or payload.fullname
         if payload.kind == "submission":
-            body = render_removal_message(self.reason_set, reason, title=title, url=url)
+            body = render_removal_message(
+                self.reason_set,
+                reason,
+                kind=payload.kind,
+                subreddit_name=payload.subreddit,
+                title=title,
+                url=url,
+            )
             modal = RemovalMessageModal(
                 self.report_view,
                 self.message_ref,
@@ -829,10 +853,20 @@ class RemovalReasonPickerView(discord.ui.View):
                 default_body=body,
             )
         else:
+            body = reason.text
+            if self.reason_set.source == "subreddit_rules":
+                body = render_removal_message(
+                    self.reason_set,
+                    reason,
+                    kind=payload.kind,
+                    subreddit_name=payload.subreddit,
+                    title=title,
+                    url=url,
+                )
             modal = ReplyModal(
                 self.report_view,
                 self.message_ref,
-                default_body=reason.text,
+                default_body=body,
             )
         await interaction.response.send_modal(modal)
 

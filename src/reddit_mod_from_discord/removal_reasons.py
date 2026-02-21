@@ -166,9 +166,40 @@ def render_removal_message(
     reason_set: RemovalReasonSet,
     reason: RemovalReason,
     *,
+    kind: ThingKind,
+    subreddit_name: str,
     title: str,
     url: str,
+    rules_url: str | None = None,
 ) -> str:
+    if reason_set.source == "subreddit_rules":
+        subreddit = (subreddit_name or "").strip() or "subreddit"
+        thing = "post" if kind == "submission" else "comment"
+        rules_link = rules_url or f"https://www.reddit.com/r/{subreddit}/about/rules"
+
+        parts: list[str] = []
+        parts.append(f"Regarding your {thing} to /r/{subreddit}:")
+        if title.strip():
+            parts.append(title.strip())
+        if url.strip():
+            parts.append(url.strip())
+
+        parts.append(
+            f"This {thing} has been removed by a moderator for breaking the following /r/{subreddit} rule:"
+        )
+
+        if reason.title.strip():
+            parts.append(reason.title.strip())
+        if reason.text.strip():
+            parts.append(reason.text.strip())
+
+        parts.append(
+            f"Please review the [subreddit rules for additional information]({rules_link})."
+        )
+
+        message = "\n\n".join(part for part in parts if part and part.strip())
+        return message.strip()
+
     header = reason_set.header
     footer = reason_set.footer
     parts: list[str] = []
