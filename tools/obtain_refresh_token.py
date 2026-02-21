@@ -44,6 +44,7 @@ def main() -> int:
         "modmail",
         "modcontributors",
         "wikiread",
+        "submit",
         "read",
         "identity",
     ]
@@ -53,7 +54,7 @@ def main() -> int:
     else:
         scopes_input = input(
             "Enter comma-separated scopes (press Enter or 'y' for default: "
-            "modlog,modposts,modmail,modcontributors,wikiread,read,identity), or '*' for all: "
+            "modlog,modposts,modmail,modcontributors,wikiread,submit,read,identity), or '*' for all: "
         ).strip()
         if not scopes_input or scopes_input.lower() in {"y", "yes"}:
             scopes = list(default_scopes)
