@@ -425,9 +425,9 @@ class BanModal(discord.ui.Modal, title="Ban User"):
 
 class RemovalMessageModal(discord.ui.Modal, title="Removal Message"):
     title_text = discord.ui.TextInput(
-        label="Short title (ignored for public comments)",
+        label="Short title (max 50 chars)",
         required=False,
-        max_length=100,
+        max_length=50,
     )
     mod_note = discord.ui.TextInput(
         label="Mod note on removal",
@@ -454,7 +454,7 @@ class RemovalMessageModal(discord.ui.Modal, title="Removal Message"):
         self._view = view
         self._message_ref = message_ref
         if default_title is not None:
-            self.title_text.default = str(default_title)[:100]
+            self.title_text.default = str(default_title)[:50]
         if default_mod_note is not None:
             self.mod_note.default = str(default_mod_note)[:250]
         if default_body is not None:
@@ -616,26 +616,6 @@ def _truncate_select_label(text: str, max_len: int = 100) -> str:
     return text[: max(0, max_len - 3)] + "..."
 
 
-class ReasonKeyModal(discord.ui.Modal, title="Find Removal Reason"):
-    query = discord.ui.TextInput(
-        label="Reason key or search",
-        placeholder="e.g. 1a, 4, leaks, hot topic",
-        required=True,
-        max_length=64,
-    )
-
-    def __init__(self, picker: "RemovalReasonPickerView") -> None:
-        super().__init__()
-        self._picker = picker
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        if not await self._picker.report_view._ensure_mod(interaction):
-            return
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        query = str(self.query.value or "").strip()
-        await self._picker.respond_for_query(interaction, query)
-
-
 class RemovalReasonSelect(discord.ui.Select):
     def __init__(self, picker: "RemovalReasonPickerView") -> None:
         self._picker = picker
@@ -688,6 +668,10 @@ class RemovalReasonPickerView(discord.ui.View):
         self.next_button.disabled = (self.page + 1) * self.page_size >= len(self.reasons)
         self.open_button.disabled = self.selected_index is None
         self.back_button.disabled = self.selected_index is None
+        if self.report_view.payload.kind == "submission":
+            self.open_button.label = "Send removal message"
+        else:
+            self.open_button.label = "Send reply"
         if not self.reasons:
             self.prev_button.disabled = True
             self.next_button.disabled = True
@@ -732,7 +716,6 @@ class RemovalReasonPickerView(discord.ui.View):
                 description=f"Source: {self._source_label()} • Page {self.page + 1}/{page_count}",
                 color=discord.Color.blurple(),
             )
-            embed.set_footer(text="Tip: use Search/Key to type 1a, 4a, leaks, etc.")
             return embed
 
         reason = self.reasons[self.selected_index]
@@ -769,56 +752,6 @@ class RemovalReasonPickerView(discord.ui.View):
         )
         await interaction.response.edit_message(embed=view.build_embed(), view=view)
 
-    async def respond_for_query(self, interaction: discord.Interaction, query: str) -> None:
-        cleaned = query.strip().lower()
-        if not cleaned:
-            await interaction.followup.send("Enter a reason key or keyword.", ephemeral=True)
-            return
-
-        exact: list[int] = []
-        prefix: list[int] = []
-        keyword: list[int] = []
-        for idx, reason in enumerate(self.reasons):
-            key = reason.key.lower()
-            title = reason.title.lower()
-            if cleaned == key:
-                exact.append(idx)
-                continue
-            if key.startswith(cleaned):
-                prefix.append(idx)
-                continue
-            if cleaned in title:
-                keyword.append(idx)
-
-        matches = exact or (prefix if len(prefix) <= 25 else []) or keyword
-        if len(matches) == 1:
-            selected = matches[0]
-            view = RemovalReasonPickerView(
-                report_view=self.report_view,
-                message_ref=self.message_ref,
-                reason_set=self.reason_set,
-                reasons=self.reasons,
-                selected_index=selected,
-                page=selected // self.page_size,
-            )
-            await interaction.followup.send(embed=view.build_embed(), view=view, ephemeral=True)
-            return
-
-        if not matches:
-            await interaction.followup.send("No matching reasons found.", ephemeral=True)
-            return
-
-        filtered_reasons = [self.reasons[idx] for idx in matches[:200]]
-        view = RemovalReasonPickerView(
-            report_view=self.report_view,
-            message_ref=self.message_ref,
-            reason_set=self.reason_set,
-            reasons=filtered_reasons,
-            selected_index=None,
-            page=0,
-        )
-        await interaction.followup.send(embed=view.build_embed(), view=view, ephemeral=True)
-
     @discord.ui.button(label="Prev", style=discord.ButtonStyle.secondary)
     async def prev_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         if not await self.report_view._ensure_mod(interaction):
@@ -853,12 +786,6 @@ class RemovalReasonPickerView(discord.ui.View):
         )
         await interaction.response.edit_message(embed=view.build_embed(), view=view)
 
-    @discord.ui.button(label="Search/Key…", style=discord.ButtonStyle.primary)
-    async def search_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
-        if not await self.report_view._ensure_mod(interaction):
-            return
-        await interaction.response.send_modal(ReasonKeyModal(self))
-
     @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary)
     async def back_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         if not await self.report_view._ensure_mod(interaction):
@@ -889,7 +816,7 @@ class RemovalReasonPickerView(discord.ui.View):
             modal = RemovalMessageModal(
                 self.report_view,
                 self.message_ref,
-                default_title=f"{reason.key} — {reason.title}",
+                default_title=f"Rule {reason.key}",
                 default_body=body,
             )
         else:

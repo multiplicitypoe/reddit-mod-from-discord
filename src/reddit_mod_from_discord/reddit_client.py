@@ -478,9 +478,11 @@ class RedditService:
             remove_kwargs["mod_note"] = mod_note.strip()
         thing.mod.remove(**remove_kwargs)
         message_type = "public_as_subreddit" if public_as_subreddit else "public"
+        # Reddit enforces a short title limit (observed 50 chars); enforce to avoid hard failures.
+        title = (message_title.strip() or "Removed")[:50]
         thing.mod.send_removal_message(
             message=message_body.strip(),
-            title=message_title.strip() or "Removed",
+            title=title,
             type=message_type,
         )
 
