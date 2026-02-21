@@ -596,7 +596,8 @@ class RedditService:
         if cached is not None and cached[0] > now:
             return cached[1]
 
-        ttl_ok_s = 6 * 3600
+        # These change very rarely; keep a long cache and refresh opportunistically.
+        ttl_ok_s = 7 * 24 * 3600
         ttl_fail_s = 10 * 60
 
         toolbox_raw: str | None = None
