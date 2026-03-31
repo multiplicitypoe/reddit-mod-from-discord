@@ -440,7 +440,7 @@ def load_settings() -> Settings:
         discord_token=_required("DISCORD_TOKEN"),
         discord_mod_channel_id=discord_mod_channel_id,
         discord_allowed_role_ids=role_ids,
-        discord_silent_notifications=_env_bool("DISCORD_SILENT_NOTIFICATIONS", True),
+        discord_silent_notifications=_env_bool("DISCORD_SILENT_NOTIFICATIONS", False),
 
         demo_mode=demo_mode,
         demo_post_url=demo_post_url,
