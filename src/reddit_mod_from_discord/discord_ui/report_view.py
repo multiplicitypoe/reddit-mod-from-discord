@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
@@ -17,6 +18,12 @@ from reddit_mod_from_discord.safety import sanitize_http_url
 from reddit_mod_from_discord.store import BotStore, ViewRecord
 
 logger = logging.getLogger("reddit_mod_from_discord")
+
+# Modlog entries to pull when Mark Handled is pressed. Only entries for this one
+# item are kept, but the API returns the subreddit's recent log, so this needs to
+# be deep enough to still contain an action taken a few minutes ago on a busy
+# subreddit.
+_HANDLED_MODLOG_LIMIT = 100
 
 _BAN_REASON_API_MAX = 100
 _BAN_NOTE_API_MAX = 300
@@ -74,26 +81,55 @@ def _format_local_hhmm(ts: float) -> str:
     return dt.strftime("%H:%M %Z")
 
 
+# Every action name this subreddit's modlog produces, mapped to what a moderator
+# reads on the card. An unmapped action falls through as Reddit spells it.
+_MODLOG_ACTION_NAMES = {
+    "approvelink": "approved",
+    "approvecomment": "approved",
+    "removecomment": "removed",
+    "removelink": "removed",
+    "spamcomment": "removed as spam",
+    "spamlink": "removed as spam",
+    "lock": "locked",
+    "unlock": "unlocked",
+    "ignorereports": "ignored reports",
+    "unignorereports": "unignored reports",
+    "snoozereports": "snoozed reports",
+    "addremovalreason": "added removal reason",
+    "sticky": "stickied",
+    "unsticky": "unstickied",
+    "distinguish": "distinguished",
+    "spoiler": "marked spoiler",
+    "unspoiler": "unmarked spoiler",
+    "marknsfw": "marked NSFW",
+    "editflair": "edited flair",
+    "setsuggestedsort": "set suggested sort",
+    "submit_scheduled_post": "posted a scheduled post",
+}
+
+# Details worth dropping: they either repeat the action back or are an internal
+# id. Anything else names the rule or reason behind the action and is kept.
+_UNINFORMATIVE_DETAILS = {"remove", "unspam", "spam", "confirm_ham", "confirm_spam"}
+
+# The detail is the final parenthesised group. It can itself contain parentheses,
+# so this anchors on the last one rather than the first.
+_TRAILING_DETAIL_RE = re.compile(r"^(?P<action>.*?)\s*\((?P<detail>.*)\)$", re.DOTALL)
+
+
 def _normalize_modlog_action_text(action_text: str) -> str:
-    # Strip internal marker and noisy confirm_* details.
-    text = str(action_text).replace("[modlog]", "").strip()
+    text = str(action_text).replace("[modlog]", " ").strip()
     text = _CONFIRM_SUFFIX_RE.sub("", text).strip()
-    lowered = text.lower()
-    mapping = {
-        "approvelink": "approved",
-        "approvecomment": "approved",
-        "removecomment": "removed",
-        "removelink": "removed",
-        "spamcomment": "removed as spam",
-        "spamlink": "removed as spam",
-        "lock": "locked",
-        "unlock": "unlocked",
-        "ignorereports": "ignored reports",
-        "unignorereports": "unignored reports",
-    }
-    if lowered in mapping:
-        return mapping[lowered]
-    return text
+
+    detail = ""
+    match = _TRAILING_DETAIL_RE.match(text)
+    if match is not None:
+        text = match.group("action").strip()
+        detail = match.group("detail").strip()
+
+    name = _MODLOG_ACTION_NAMES.get(text.lower(), text)
+    if detail.lower() in _UNINFORMATIVE_DETAILS or detail.isdigit():
+        detail = ""
+    return "{} ({})".format(name, detail) if detail else name
 
 
 def _normalize_audit_log_entry(line: str) -> str:
@@ -991,9 +1027,9 @@ class MoreActionsSelect(discord.ui.Select):
                 )
             except Exception:
                 logger.exception("Failed to load removal reasons")
-                await interaction.followup.send(
-                    "Failed to load removal reasons. Try again or use Reply / Removal Message.",
-                    ephemeral=True,
+                await interaction.edit_original_response(
+                    content="Failed to load removal reasons. "
+                            "Try again or use Reply / Removal Message.",
                 )
                 return
             reasons = reason_set.applicable_reasons(view.payload.kind)
@@ -1003,7 +1039,9 @@ class MoreActionsSelect(discord.ui.Select):
                 reason_set=reason_set,
                 reasons=reasons,
             )
-            await interaction.followup.send(embed=picker.build_embed(), view=picker, ephemeral=True)
+            await interaction.edit_original_response(
+                embed=picker.build_embed(), view=picker
+            )
             return
         if selected == "refresh":
             await interaction.response.defer(ephemeral=True, thinking=True)
@@ -1209,6 +1247,48 @@ class ReportView(discord.ui.View):
                 pass
         self._update_toggle_labels()
 
+    async def _pull_reddit_side_actions(
+        self, interaction: discord.Interaction, ref: MessageRef
+    ) -> None:
+        """Fold in anything done on Reddit before the moderator pressed the button."""
+        setup_id = self.payload.setup_id or str(ref.guild_id)
+        subreddit = self.payload.subreddit
+        entries: list = []
+        if subreddit:
+            try:
+                entries = await self.reddit.fetch_recent_modlog_entries(
+                    subreddit, limit=_HANDLED_MODLOG_LIMIT
+                )
+            except Exception:
+                logger.exception("Failed to fetch modlog after Mark Handled")
+        if entries:
+            try:
+                await self.store.save_modlog_entries(setup_id, entries)
+            except Exception:
+                logger.exception("Failed to persist modlog entries")
+
+        changed = False
+        existing = set(self.payload.action_log)
+        for fullname, _created_utc, line in entries:
+            if fullname != self.payload.fullname or line in existing:
+                continue
+            self.payload.action_log.append(line)
+            existing.add(line)
+            changed = True
+
+        # Also refresh removed/approved so the Status line reflects the action
+        # rather than only saying handled.
+        try:
+            before = (self.payload.removed, self.payload.approved, self.payload.locked)
+            await self._refresh_state()
+            if (self.payload.removed, self.payload.approved, self.payload.locked) != before:
+                changed = True
+        except Exception:
+            logger.exception("Failed to refresh state after Mark Handled")
+
+        if changed:
+            await self._apply_message_update(interaction, ref)
+
     async def _apply_message_update(self, interaction: discord.Interaction, ref: MessageRef) -> None:
         msg = await self._fetch_message_for_ref(interaction, ref)
         if msg is not None:
@@ -1262,6 +1342,84 @@ class ReportView(discord.ui.View):
         )
         await interaction.followup.send(f"Done: {action_text}", ephemeral=True)
 
+    async def _respond(self, interaction: discord.Interaction, content: str) -> None:
+        """Update the moderator's one ephemeral reply instead of adding another.
+
+        Every step used to call followup.send, so a multi step flow left a stack
+        of ephemeral messages that each had to be dismissed and that pushed the
+        channel view around. Editing the deferred reply keeps it to one.
+        """
+        try:
+            await interaction.edit_original_response(content=content, embed=None, view=None)
+            return
+        except discord.HTTPException:
+            pass
+        try:
+            await interaction.followup.send(content, ephemeral=True)
+        except discord.HTTPException:
+            logger.debug("Could not deliver response to moderator: %s", content)
+
+    def _mark_action_failed(self, action_text: str) -> None:
+        """Flip an optimistic action log line to show the action did not take."""
+        for i in range(len(self.payload.action_log) - 1, -1, -1):
+            if self.payload.action_log[i].endswith(action_text):
+                self.payload.action_log[i] += "  (FAILED)"
+                return
+
+    async def _finish_button_action(
+        self,
+        interaction: discord.Interaction,
+        ref: "MessageRef",
+        action_text: str,
+        action_coro,
+        *,
+        mark_reviewed: bool,
+        total_start: float,
+    ) -> None:
+        """Do the slow Reddit half after the moderator has already been answered."""
+        action_start = time.monotonic()
+        try:
+            await action_coro()
+            if mark_reviewed:
+                await self.reddit.set_ignore_reports(self.payload.fullname, True)
+        except Exception as exc:
+            logger.exception("Action failed: %s", action_text)
+            self._mark_action_failed(action_text)
+            try:
+                await self._apply_message_update(interaction, ref)
+            except Exception:
+                logger.exception("Failed to correct alert after a failed action")
+            await self._respond(interaction, f"Action failed: {exc}")
+            return
+        action_s = time.monotonic() - action_start
+
+        refresh_start = time.monotonic()
+        refresh_failed = False
+        try:
+            await self._refresh_state()
+        except Exception:
+            refresh_failed = True
+            logger.exception("Failed to refresh Reddit state after action")
+        refresh_s = time.monotonic() - refresh_start
+
+        update_start = time.monotonic()
+        try:
+            await self._apply_message_update(interaction, ref)
+        except Exception:
+            logger.exception("Failed to apply post action update")
+        update_s = time.monotonic() - update_start
+
+        self._log_action_timing(
+            interaction,
+            action_text,
+            total_s=time.monotonic() - total_start,
+            action_s=action_s,
+            refresh_s=refresh_s,
+            update_s=update_s,
+            refresh_failed=refresh_failed,
+        )
+        await self._respond(interaction, f"Done: {action_text}")
+
     async def _run_button_action(
         self,
         interaction: discord.Interaction,
@@ -1280,42 +1438,40 @@ class ReportView(discord.ui.View):
             await interaction.response.send_message("Message context unavailable.", ephemeral=True)
             return
 
+        # Apply optimistically. The Reddit write is the slow part, p90 about 15s
+        # and worst case 36s, and it accounted for 71% of button latency while
+        # the moderator sat watching a spinner. Record the action, redraw the
+        # alert and answer immediately; the write runs in the background and
+        # corrects the alert if it fails.
         await interaction.response.defer(ephemeral=True, thinking=True)
         total_start = time.monotonic()
-        action_start = time.monotonic()
-        try:
-            await action_coro()
-            if mark_reviewed:
-                await self.reddit.set_ignore_reports(self.payload.fullname, True)
-        except Exception as exc:
-            logger.exception("Action failed: %s", action_text)
-            await interaction.followup.send(f"Action failed: {exc}", ephemeral=True)
-            return
-        action_s = time.monotonic() - action_start
-
         self._append_action(interaction, action_text)
-        refresh_start = time.monotonic()
-        refresh_failed = False
         try:
-            await self._refresh_state()
+            await self._apply_message_update(interaction, ref)
         except Exception:
-            refresh_failed = True
-            logger.exception("Failed to refresh Reddit state after action")
-        refresh_s = time.monotonic() - refresh_start
-        update_start = time.monotonic()
-        await self._apply_message_update(interaction, ref)
-        update_s = time.monotonic() - update_start
-        total_s = time.monotonic() - total_start
-        self._log_action_timing(
-            interaction,
-            action_text,
-            total_s=total_s,
-            action_s=action_s,
-            refresh_s=refresh_s,
-            update_s=update_s,
-            refresh_failed=refresh_failed,
+            logger.exception("Failed to update alert optimistically")
+        await self._respond(interaction, f"{action_text}, applying on Reddit\u2026")
+
+        task = asyncio.create_task(
+            self._finish_button_action(
+                interaction,
+                ref,
+                action_text,
+                action_coro,
+                mark_reviewed=mark_reviewed,
+                total_start=total_start,
+            )
         )
-        await interaction.followup.send(f"Done: {action_text}", ephemeral=True)
+        # Without this an unexpected failure in the background half would vanish
+        # as an unretrieved task exception, and the moderator would be left with
+        # an alert that says the action was applied.
+        task.add_done_callback(
+            lambda t: t.cancelled()
+            or (t.exception() is not None
+                and logger.error(
+                    "Background action %r failed: %r", action_text, t.exception()
+                ))
+        )
 
     @discord.ui.button(
         label="Approve",
@@ -1409,7 +1565,9 @@ class ReportView(discord.ui.View):
         self._append_action(interaction, "marked handled")
         self._disable_actions()
         start = time.monotonic()
-        await interaction.response.defer(ephemeral=True, thinking=False)
+        # thinking=True so there is a single ephemeral to edit, matching the
+        # other buttons, rather than deferring silently and then sending one.
+        await interaction.response.defer(ephemeral=True, thinking=True)
         await self._apply_message_update(interaction, ref)
         total_s = time.monotonic() - start
         self._log_action_timing(
@@ -1418,4 +1576,14 @@ class ReportView(discord.ui.View):
             total_s=total_s,
             update_s=total_s,
         )
-        await interaction.followup.send("Marked handled.", ephemeral=True)
+        await self._respond(interaction, "Marked handled.")
+
+        # Done in the background so the button stays instant: the moderator has
+        # already been answered and the card updates again a moment later if
+        # Reddit shows they acted there.
+        task = asyncio.create_task(self._pull_reddit_side_actions(interaction, ref))
+        task.add_done_callback(
+            lambda t: t.cancelled()
+            or (t.exception() is not None
+                and logger.error("Reddit side action pull failed: %r", t.exception()))
+        )

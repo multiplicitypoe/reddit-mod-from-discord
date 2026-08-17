@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from dataclasses import dataclass
 
@@ -20,6 +21,29 @@ from reddit_mod_from_discord.safety import sanitize_http_url
 from reddit_mod_from_discord.store import BotStore, ViewRecord
 
 logger = logging.getLogger("reddit_mod_from_discord")
+
+# Modlog actions that mean a report was genuinely dealt with. Deliberately
+# excludes editflair, lock, distinguish and similar, which happen on items whose
+# report is still outstanding: closing on those would hide live reports.
+_RESOLVING_MODLOG_ACTIONS = frozenset(
+    {
+        "approvelink",
+        "approvecomment",
+        "removelink",
+        "removecomment",
+        "spamlink",
+        "spamcomment",
+        "ignorereports",
+        "snoozereports",
+    }
+)
+_MODLOG_ACTION_RE = re.compile(r": (\w+) \[modlog\]")
+
+# prune_views previously ran only inside _restore_views, so between restarts the
+# alert_views table grew without bound and every expired view stayed in the
+# refresh set. After 50 days of uptime that was 225 items being re-queried
+# against Reddit every poll cycle. The TTL itself is unchanged.
+_VIEW_PRUNE_INTERVAL_S = 30 * 60
 
 
 @dataclass
@@ -47,6 +71,7 @@ class RedditModBot(discord.Client):
         self._runtimes: dict[str, SetupRuntime] = {}
         self._runtimes_by_guild: dict[int, list[str]] = {}
         self._startup_done = False
+        self._last_view_prune = 0.0
 
     async def on_ready(self) -> None:
         if self._startup_done:
@@ -485,10 +510,24 @@ class RedditModBot(discord.Client):
         except Exception:
             logger.exception("Failed to refresh modlog cache for %s", runtime.setup_id)
 
+    async def _prune_view_store_if_due(self) -> None:
+        """Drop expired alert views on a timer as well as at startup."""
+        now = time.monotonic()
+        if now - self._last_view_prune < _VIEW_PRUNE_INTERVAL_S:
+            return
+        self._last_view_prune = now
+        try:
+            await self.store.prune_views(
+                ttl_s=self.settings.view_store_ttl_hours * 3600
+            )
+        except Exception:
+            logger.exception("Failed to prune expired alert views")
+
     async def _poll_loop(self, guild: discord.Guild, runtime: SetupRuntime) -> None:
         await asyncio.sleep(2)
         while not self.is_closed():
             try:
+                await self._prune_view_store_if_due()
                 posted = await self._poll_once(guild, runtime)
                 if posted:
                     logger.info(
@@ -615,6 +654,26 @@ class RedditModBot(discord.Client):
             new_report=report,
         )
 
+    async def _resolved_on_reddit(self, runtime: SetupRuntime, fullname: str) -> bool:
+        """True if the local modlog copy already shows this item was resolved.
+
+        Reads the modlog table only, no Reddit call. Items dealt with in
+        Reddit's own queue used to stay in the unhandled set and get re-queried
+        every poll cycle for a week, which is where most of this bot's Reddit
+        API time went.
+        """
+        try:
+            lines = await self.store.list_modlog_entries(
+                runtime.setup_id, fullname, limit=50
+            )
+        except Exception:
+            return False
+        for line in lines:
+            match = _MODLOG_ACTION_RE.search(str(line))
+            if match and match.group(1) in _RESOLVING_MODLOG_ACTIONS:
+                return True
+        return False
+
     async def _refresh_unhandled_alerts(
         self,
         guild: discord.Guild,
@@ -630,6 +689,30 @@ class RedditModBot(discord.Client):
 
         for fullname, channel_id, message_id in refs:
             if fullname in skip_fullnames:
+                continue
+            if await self._resolved_on_reddit(runtime, fullname):
+                # The alert already merges modlog lines into its action log, so
+                # the moderator can see what happened. Update it once from
+                # cached data, then stop polling it. Buttons keep working.
+                try:
+                    await self._edit_alert_message(
+                        guild,
+                        runtime,
+                        fullname=fullname,
+                        channel_id=channel_id,
+                        message_id=message_id,
+                    )
+                except Exception:
+                    logger.exception("Failed to update resolved alert %s", fullname)
+                try:
+                    await self.store.mark_handled(fullname, runtime.setup_id)
+                except Exception:
+                    logger.exception("Failed to mark %s handled", fullname)
+                else:
+                    logger.info(
+                        "Auto-closed %s: Reddit modlog already shows it resolved",
+                        fullname,
+                    )
                 continue
             try:
                 state = await runtime.reddit.refresh_state(fullname)
