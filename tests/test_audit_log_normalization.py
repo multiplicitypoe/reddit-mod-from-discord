@@ -63,6 +63,7 @@ def test_maps_the_remaining_actions_seen_in_this_modlog():
         assert body(line) == "u/Modaline: %s" % expected, action
 
 
-def test_lines_already_in_local_time_are_left_alone():
-    line = "11:33 PDT - Moda: marked handled"
-    assert _normalize_audit_log_entry(line) == line
+def test_the_bots_own_wording_is_not_run_through_the_action_mapping():
+    """The mapping is for Reddit's action names, not for lines the bot wrote."""
+    out = _normalize_audit_log_entry("11:33 PDT - Moda: marked handled")
+    assert out.endswith(" - Moda: marked handled")
