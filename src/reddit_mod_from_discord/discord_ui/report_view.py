@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -27,7 +28,8 @@ _HANDLED_MODLOG_LIMIT = 100
 
 _BAN_REASON_API_MAX = 100
 _BAN_NOTE_API_MAX = 300
-_DISPLAY_TZ = ZoneInfo("America/Los_Angeles")
+# Where the moderators are. Override with DISPLAY_TIMEZONE if that changes again.
+_DISPLAY_TZ = ZoneInfo(os.environ.get("DISPLAY_TIMEZONE", "America/New_York"))
 
 
 def _truncate(text: str, max_len: int) -> str:
@@ -70,8 +72,11 @@ _UTC_STAMP_NO_DATE_RE = re.compile(
     r"^(?P<hour>\d{2}):(?P<minute>\d{2}) UTC - (?P<rest>.+)$"
 )
 _LOCAL_STAMP_RE = re.compile(
-    r"^(?P<hour>\d{2}):(?P<minute>\d{2}) (?P<tz>PST|PDT) - (?P<rest>.+)$"
+    r"^(?P<hour>\d{2}):(?P<minute>\d{2}) (?P<tz>PST|PDT|EST|EDT) - (?P<rest>.+)$"
 )
+# Offsets from UTC for the zones a stored line can carry, so an old stamp can be
+# read back and re-rendered wherever the display zone now points.
+_LOCAL_STAMP_OFFSETS = {"PST": -8, "PDT": -7, "EST": -5, "EDT": -4}
 _MODLOG_ACTION_RE = re.compile(r"^u/(?P<mod>[^:]+): (?P<action>.+)$")
 _CONFIRM_SUFFIX_RE = re.compile(r"\s*\((confirm_ham|confirm_spam)\)\s*$")
 
@@ -79,6 +84,21 @@ _CONFIRM_SUFFIX_RE = re.compile(r"\s*\((confirm_ham|confirm_spam)\)\s*$")
 def _format_local_hhmm(ts: float) -> str:
     dt = datetime.fromtimestamp(ts, tz=timezone.utc).astimezone(_DISPLAY_TZ)
     return dt.strftime("%H:%M %Z")
+
+
+def _nearest_utc_for_hhmm(
+    hour: int, minute: int, now_utc: datetime, offset_hours: int = 0
+) -> datetime:
+    """Resolve a dateless HH:MM to the nearest day, given its offset from UTC."""
+    candidates = []
+    for day_offset in (0, -1, 1):
+        midnight = (now_utc + timedelta(days=day_offset)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        candidates.append(
+            midnight + timedelta(hours=hour - offset_hours, minutes=minute)
+        )
+    return min(candidates, key=lambda dt: abs((now_utc - dt).total_seconds()))
 
 
 # Every action name this subreddit's modlog produces, mapped to what a moderator
@@ -132,22 +152,33 @@ def _normalize_modlog_action_text(action_text: str) -> str:
     return "{} ({})".format(name, detail) if detail else name
 
 
-def _normalize_audit_log_entry(line: str) -> str:
+def _normalize_audit_log_entry(line: str, now_utc: datetime = None) -> str:
     """
     Normalize stored audit log lines for display:
-    - Always render timestamp as HH:MM PST/PDT.
+    - Always render timestamp as HH:MM in the display timezone.
     - Collapse modlog entries into a similar shape as in-bot actions.
     """
     raw = str(line).strip()
     if not raw:
         return raw
 
+    if now_utc is None:
+        now_utc = datetime.now(tz=timezone.utc)
+
     local_match = _LOCAL_STAMP_RE.match(raw)
     if local_match is not None:
-        # Already in desired time format.
-        return raw
-
-    now_utc = datetime.now(tz=timezone.utc)
+        # Stamped in local time when it was stored. Read it back through its own
+        # offset so it lands in the display zone, which may not be the zone it
+        # was written in. A line already in the display zone survives unchanged.
+        dt_utc = _nearest_utc_for_hhmm(
+            int(local_match.group("hour")),
+            int(local_match.group("minute")),
+            now_utc,
+            _LOCAL_STAMP_OFFSETS[local_match.group("tz")],
+        )
+        return "{} - {}".format(
+            _format_local_hhmm(dt_utc.timestamp()), local_match.group("rest").strip()
+        )
 
     match = _UTC_STAMP_WITH_DATE_RE.match(raw)
     if match is not None:
@@ -161,15 +192,9 @@ def _normalize_audit_log_entry(line: str) -> str:
         match = _UTC_STAMP_NO_DATE_RE.match(raw)
         if match is None:
             return raw
-        hour = int(match.group("hour"))
-        minute = int(match.group("minute"))
-        candidates: list[datetime] = []
-        for day_offset in (0, -1, 1):
-            dt = (now_utc + timedelta(days=day_offset)).replace(
-                hour=hour, minute=minute, second=0, microsecond=0
-            )
-            candidates.append(dt)
-        dt_utc = min(candidates, key=lambda dt: abs((now_utc - dt).total_seconds()))
+        dt_utc = _nearest_utc_for_hhmm(
+            int(match.group("hour")), int(match.group("minute")), now_utc
+        )
         stamp = _format_local_hhmm(dt_utc.timestamp())
         rest = match.group("rest").strip()
 
