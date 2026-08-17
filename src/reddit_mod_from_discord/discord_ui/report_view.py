@@ -86,6 +86,16 @@ def _format_local_hhmm(ts: float) -> str:
     return dt.strftime("%H:%M %Z")
 
 
+def _utc_stamp(now_utc: datetime = None) -> str:
+    """The storage format for audit log lines.
+
+    UTC with a full date, so the line stays true if the display zone changes and
+    so a dateless stamp never has to be guessed back onto a day.
+    """
+    dt = now_utc if now_utc is not None else datetime.now(tz=timezone.utc)
+    return dt.strftime("%Y-%m-%d %H:%M UTC")
+
+
 def _nearest_utc_for_hhmm(
     hour: int, minute: int, now_utc: datetime, offset_hours: int = 0
 ) -> datetime:
@@ -1212,8 +1222,7 @@ class ReportView(discord.ui.View):
     def _append_action(self, interaction: discord.Interaction, action_text: str) -> None:
         user = interaction.user
         actor = user.display_name if isinstance(user, discord.Member) else str(user)
-        stamp = datetime.now(tz=_DISPLAY_TZ).strftime("%H:%M %Z")
-        self.payload.action_log.append(f"{stamp} - {actor}: {action_text}")
+        self.payload.action_log.append(f"{_utc_stamp()} - {actor}: {action_text}")
         if self.demo_mode:
             logger.info("[demo] %s %s", self.payload.fullname, action_text)
 
@@ -1230,7 +1239,7 @@ class ReportView(discord.ui.View):
     ) -> None:
         user = interaction.user
         actor = user.display_name if isinstance(user, discord.Member) else str(user)
-        stamp = datetime.now(tz=_DISPLAY_TZ).strftime("%H:%M %Z")
+        stamp = _utc_stamp()
         parts = [f"total={_format_duration(total_s)}"]
         if action_s is not None:
             parts.append(f"action={_format_duration(action_s)}")
