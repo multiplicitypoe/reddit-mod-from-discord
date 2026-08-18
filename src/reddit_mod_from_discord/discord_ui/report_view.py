@@ -1376,22 +1376,20 @@ class ReportView(discord.ui.View):
         )
         await interaction.followup.send(f"Done: {action_text}", ephemeral=True)
 
-    async def _respond(self, interaction: discord.Interaction, content: str) -> None:
-        """Update the moderator's one ephemeral reply instead of adding another.
+    async def _notify_failure(self, interaction: discord.Interaction, content: str) -> None:
+        """Tell the moderator that something did not work.
 
-        Every step used to call followup.send, so a multi step flow left a stack
-        of ephemeral messages that each had to be dismissed and that pushed the
-        channel view around. Editing the deferred reply keeps it to one.
+        Only used when an action fails. Success is visible on the card itself,
+        so saying so again costs the moderator a message to dismiss.
+
+        This must stay a followup. These buttons acknowledge with a deferred
+        update, so the interaction's original response is the alert message, and
+        editing it would replace the card with this text.
         """
-        try:
-            await interaction.edit_original_response(content=content, embed=None, view=None)
-            return
-        except discord.HTTPException:
-            pass
         try:
             await interaction.followup.send(content, ephemeral=True)
         except discord.HTTPException:
-            logger.debug("Could not deliver response to moderator: %s", content)
+            logger.debug("Could not deliver failure notice to moderator: %s", content)
 
     def _mark_action_failed(self, action_text: str) -> None:
         """Flip an optimistic action log line to show the action did not take."""
@@ -1423,7 +1421,7 @@ class ReportView(discord.ui.View):
                 await self._apply_message_update(interaction, ref)
             except Exception:
                 logger.exception("Failed to correct alert after a failed action")
-            await self._respond(interaction, f"Action failed: {exc}")
+            await self._notify_failure(interaction, f"Action failed: {exc}")
             return
         action_s = time.monotonic() - action_start
 
@@ -1452,7 +1450,6 @@ class ReportView(discord.ui.View):
             update_s=update_s,
             refresh_failed=refresh_failed,
         )
-        await self._respond(interaction, f"Done: {action_text}")
 
     async def _run_button_action(
         self,
@@ -1474,17 +1471,19 @@ class ReportView(discord.ui.View):
 
         # Apply optimistically. The Reddit write is the slow part, p90 about 15s
         # and worst case 36s, and it accounted for 71% of button latency while
-        # the moderator sat watching a spinner. Record the action, redraw the
-        # alert and answer immediately; the write runs in the background and
-        # corrects the alert if it fails.
-        await interaction.response.defer(ephemeral=True, thinking=True)
+        # the moderator sat watching a spinner. Record the action and redraw the
+        # alert straight away; the write runs in the background and corrects the
+        # alert if it fails.
+        #
+        # A deferred update rather than a thinking reply: it acknowledges the
+        # press without creating a message, so the redrawn card is the feedback.
+        await interaction.response.defer()
         total_start = time.monotonic()
         self._append_action(interaction, action_text)
         try:
             await self._apply_message_update(interaction, ref)
         except Exception:
             logger.exception("Failed to update alert optimistically")
-        await self._respond(interaction, f"{action_text}, applying on Reddit\u2026")
 
         task = asyncio.create_task(
             self._finish_button_action(
@@ -1599,9 +1598,7 @@ class ReportView(discord.ui.View):
         self._append_action(interaction, "marked handled")
         self._disable_actions()
         start = time.monotonic()
-        # thinking=True so there is a single ephemeral to edit, matching the
-        # other buttons, rather than deferring silently and then sending one.
-        await interaction.response.defer(ephemeral=True, thinking=True)
+        await interaction.response.defer()
         await self._apply_message_update(interaction, ref)
         total_s = time.monotonic() - start
         self._log_action_timing(
@@ -1610,11 +1607,10 @@ class ReportView(discord.ui.View):
             total_s=total_s,
             update_s=total_s,
         )
-        await self._respond(interaction, "Marked handled.")
 
-        # Done in the background so the button stays instant: the moderator has
-        # already been answered and the card updates again a moment later if
-        # Reddit shows they acted there.
+        # Done in the background so the button stays instant: the card is
+        # already redrawn and updates again a moment later if Reddit shows the
+        # moderator acted there.
         task = asyncio.create_task(self._pull_reddit_side_actions(interaction, ref))
         task.add_done_callback(
             lambda t: t.cancelled()
