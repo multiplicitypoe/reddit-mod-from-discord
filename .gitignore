@@ -6,3 +6,7 @@ __pycache__/
 .pytest_cache/
 data/*.sqlite3
 secrets.txt
+
+# Core dumps. An arm64 image run on this 32 bit userland dies on SIGSYS and
+# drops one here, owned by root, which then blocks git add.
+core
