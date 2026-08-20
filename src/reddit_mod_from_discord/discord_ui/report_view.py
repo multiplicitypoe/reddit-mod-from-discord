@@ -20,6 +20,33 @@ from reddit_mod_from_discord.store import BotStore, ViewRecord
 
 logger = logging.getLogger("reddit_mod_from_discord")
 
+# Every button here answers straight away and finishes the job afterwards, which
+# only works if the background half is held onto. The event loop keeps weak
+# references to tasks, so one whose only reference is a local variable can be
+# collected part way through and cancelled. That arrives as a BaseException, so
+# the usual except Exception never sees it and the done callback returns early
+# on t.cancelled(). The same shape in the incident assistant meant its audit log
+# summary never once reached a card, without a single line in the log.
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
+def _spawn(coro, what: str) -> asyncio.Task:
+    """Run something after the button has answered, and keep hold of it."""
+    task = asyncio.create_task(coro)
+    _BACKGROUND_TASKS.add(task)
+
+    def _done(finished: asyncio.Task) -> None:
+        _BACKGROUND_TASKS.discard(finished)
+        if finished.cancelled():
+            logger.warning("Background work was cancelled: %s", what)
+            return
+        error = finished.exception()
+        if error is not None:
+            logger.error("Background work failed: %s: %r", what, error)
+
+    task.add_done_callback(_done)
+    return task
+
 # Modlog entries to pull when Mark Handled is pressed. Only entries for this one
 # item are kept, but the API returns the subreddit's recent log, so this needs to
 # be deep enough to still contain an action taken a few minutes ago on a busy
@@ -1485,7 +1512,10 @@ class ReportView(discord.ui.View):
         except Exception:
             logger.exception("Failed to update alert optimistically")
 
-        task = asyncio.create_task(
+        # Held rather than fired and forgotten. A failure in the background half
+        # must reach the log, otherwise the moderator is left with an alert that
+        # says the action was applied when it was not.
+        _spawn(
             self._finish_button_action(
                 interaction,
                 ref,
@@ -1493,17 +1523,8 @@ class ReportView(discord.ui.View):
                 action_coro,
                 mark_reviewed=mark_reviewed,
                 total_start=total_start,
-            )
-        )
-        # Without this an unexpected failure in the background half would vanish
-        # as an unretrieved task exception, and the moderator would be left with
-        # an alert that says the action was applied.
-        task.add_done_callback(
-            lambda t: t.cancelled()
-            or (t.exception() is not None
-                and logger.error(
-                    "Background action %r failed: %r", action_text, t.exception()
-                ))
+            ),
+            "button action %r on %s" % (action_text, self.payload.fullname),
         )
 
     @discord.ui.button(
@@ -1611,9 +1632,5 @@ class ReportView(discord.ui.View):
         # Done in the background so the button stays instant: the card is
         # already redrawn and updates again a moment later if Reddit shows the
         # moderator acted there.
-        task = asyncio.create_task(self._pull_reddit_side_actions(interaction, ref))
-        task.add_done_callback(
-            lambda t: t.cancelled()
-            or (t.exception() is not None
-                and logger.error("Reddit side action pull failed: %r", t.exception()))
-        )
+        _spawn(self._pull_reddit_side_actions(interaction, ref),
+               "Reddit side actions for %s" % self.payload.fullname)
