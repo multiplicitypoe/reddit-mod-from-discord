@@ -349,6 +349,15 @@ class BotStore:
         )
         await conn.commit()
 
+    async def mark_unhandled(self, fullname: str, setup_id: str) -> None:
+        """Put an item back in the queue, so it is refreshed and chased again."""
+        conn = self._require_conn()
+        await conn.execute(
+            "UPDATE reported_items SET handled = 0 WHERE setup_id = ? AND fullname = ?",
+            (setup_id, fullname),
+        )
+        await conn.commit()
+
     async def save_view(self, record: ViewRecord) -> None:
         conn = self._require_conn()
         await conn.execute(
