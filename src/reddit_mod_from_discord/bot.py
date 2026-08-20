@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from datetime import datetime, timezone
 import time
 from dataclasses import dataclass
 
@@ -654,7 +655,7 @@ class RedditModBot(discord.Client):
             new_report=report,
         )
 
-    async def _resolved_on_reddit(self, runtime: SetupRuntime, fullname: str) -> bool:
+    async def _resolved_on_reddit(self, runtime: SetupRuntime, fullname: str) -> str | None:
         """True if the local modlog copy already shows this item was resolved.
 
         Reads the modlog table only, no Reddit call. Items dealt with in
@@ -671,8 +672,8 @@ class RedditModBot(discord.Client):
         for line in lines:
             match = _MODLOG_ACTION_RE.search(str(line))
             if match and match.group(1) in _RESOLVING_MODLOG_ACTIONS:
-                return True
-        return False
+                return match.group(1)
+        return None
 
     async def _refresh_unhandled_alerts(
         self,
@@ -690,7 +691,8 @@ class RedditModBot(discord.Client):
         for fullname, channel_id, message_id in refs:
             if fullname in skip_fullnames:
                 continue
-            if await self._resolved_on_reddit(runtime, fullname):
+            resolved_action = await self._resolved_on_reddit(runtime, fullname)
+            if resolved_action:
                 # The alert already merges modlog lines into its action log, so
                 # the moderator can see what happened. Update it once from
                 # cached data, then stop polling it. Buttons keep working.
@@ -701,6 +703,7 @@ class RedditModBot(discord.Client):
                         fullname=fullname,
                         channel_id=channel_id,
                         message_id=message_id,
+                        resolved_action=resolved_action,
                     )
                 except Exception:
                     logger.exception("Failed to update resolved alert %s", fullname)
@@ -749,6 +752,7 @@ class RedditModBot(discord.Client):
         message_id: int,
         new_report: ReportedItem | None = None,
         refreshed_state: dict[str, object] | None = None,
+        resolved_action: str | None = None,
     ) -> None:
         view_record = await self.store.get_view(message_id)
         if view_record is None:
@@ -864,6 +868,22 @@ class RedditModBot(discord.Client):
                         changed = True
             except Exception:
                 logger.exception("Failed to load modlog cache for %s", payload.fullname)
+
+        if resolved_action and not payload.handled:
+            # Someone dealt with this in Reddit's own queue. Mark the card as
+            # well as the tracking, otherwise it sits there looking live.
+            payload.handled = True
+            if resolved_action in ("removelink", "removecomment", "spamlink", "spamcomment"):
+                payload.removed = True
+            elif resolved_action in ("approvelink", "approvecomment"):
+                payload.approved = True
+            stamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+            # "closed" already means something on Reddit. "handled" is only
+            # ever ours, and it is the word on the button.
+            note = "%s - Marked Handled: %s on Reddit" % (stamp, resolved_action)
+            if note not in payload.action_log:
+                payload.action_log.append(note)
+            changed = True
 
         if not changed:
             return
