@@ -46,6 +46,42 @@ _MODLOG_ACTION_RE = re.compile(r": (\w+) \[modlog\]")
 # against Reddit every poll cycle. The TTL itself is unchanged.
 _VIEW_PRUNE_INTERVAL_S = 30 * 60
 
+# How long to keep watching a card after it is closed. Moderators reverse
+# themselves within minutes and reconsider hours later, and both were being
+# missed. Costs nothing per card: the modlog cache is read, not Reddit.
+_HANDLED_WATCH_S = 24 * 3600
+
+_REMOVING_ACTIONS = ("removelink", "removecomment", "spamlink", "spamcomment")
+_APPROVING_ACTIONS = ("approvelink", "approvecomment")
+
+
+def newest_resolving_action(lines) -> str | None:
+    """The most recent modlog action that says how an item ended up.
+
+    The store hands these over oldest first, because that is the order they read
+    in on the card, so the newest is at the end. Walking them front to back
+    returned the oldest action instead: a post removed and then put back a
+    couple of minutes later resolved as removed, and stayed that way.
+    """
+    for line in reversed(list(lines)):
+        match = _MODLOG_ACTION_RE.search(str(line))
+        if match and match.group(1) in _RESOLVING_MODLOG_ACTIONS:
+            return match.group(1)
+    return None
+
+
+def status_after(action: str) -> tuple[bool, bool] | None:
+    """What (removed, approved) should read as after this action on Reddit.
+
+    None for the actions that say nothing about whether the item is up, such as
+    adding a removal reason or ignoring reports.
+    """
+    if action in _REMOVING_ACTIONS:
+        return (True, False)
+    if action in _APPROVING_ACTIONS:
+        return (False, True)
+    return None
+
 
 @dataclass
 class SetupRuntime:
@@ -630,6 +666,7 @@ class RedditModBot(discord.Client):
 
             # Also refresh known unhandled alerts to catch external changes.
             await self._refresh_unhandled_alerts(guild, runtime, skip_fullnames=seen_fullnames)
+            await self._recheck_recently_handled(guild, runtime)
             return posted
 
     async def _update_existing_alert(
@@ -669,11 +706,43 @@ class RedditModBot(discord.Client):
             )
         except Exception:
             return False
-        for line in lines:
-            match = _MODLOG_ACTION_RE.search(str(line))
-            if match and match.group(1) in _RESOLVING_MODLOG_ACTIONS:
-                return match.group(1)
-        return None
+        return newest_resolving_action(lines)
+
+    async def _recheck_recently_handled(
+        self,
+        guild: discord.Guild,
+        runtime: SetupRuntime,
+    ) -> None:
+        """Keep watching a card for a day after it was closed.
+
+        Closing it is not the end of the story. The item can be put back, or
+        removed again, and until now nothing looked, so a card could sit there
+        saying removed about a post that is live.
+
+        Reads the cached modlog only, so this costs no Reddit calls: the poll
+        already refreshes that cache for the whole subreddit.
+        """
+        since = time.time() - _HANDLED_WATCH_S
+        try:
+            refs = await self.store.list_recently_handled_alerts(runtime.setup_id, since)
+        except Exception:
+            logger.exception("Failed to list recently handled alerts")
+            return
+        for fullname, channel_id, message_id in refs:
+            resolved_action = await self._resolved_on_reddit(runtime, fullname)
+            if not resolved_action:
+                continue
+            try:
+                await self._edit_alert_message(
+                    guild,
+                    runtime,
+                    fullname=fullname,
+                    channel_id=channel_id,
+                    message_id=message_id,
+                    resolved_action=resolved_action,
+                )
+            except Exception:
+                logger.exception("Failed to re-check handled alert %s", fullname)
 
     async def _refresh_unhandled_alerts(
         self,
@@ -869,14 +938,19 @@ class RedditModBot(discord.Client):
             except Exception:
                 logger.exception("Failed to load modlog cache for %s", payload.fullname)
 
+        # The status follows the newest action on Reddit whether or not the card
+        # is closed. A post removed and then put back a minute later used to
+        # keep saying removed for good, because closing the card stopped
+        # anything from looking again.
+        status = status_after(resolved_action) if resolved_action else None
+        if status is not None and (payload.removed, payload.approved) != status:
+            payload.removed, payload.approved = status
+            changed = True
+
         if resolved_action and not payload.handled:
             # Someone dealt with this in Reddit's own queue. Mark the card as
             # well as the tracking, otherwise it sits there looking live.
             payload.handled = True
-            if resolved_action in ("removelink", "removecomment", "spamlink", "spamcomment"):
-                payload.removed = True
-            elif resolved_action in ("approvelink", "approvecomment"):
-                payload.approved = True
             stamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
             # "closed" already means something on Reddit. "handled" is only
             # ever ours, and it is the word on the button.
