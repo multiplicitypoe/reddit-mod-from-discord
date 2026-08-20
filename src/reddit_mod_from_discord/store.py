@@ -30,6 +30,7 @@ class BotStore:
         self._conn = await aiosqlite.connect(self.db_path)
         self._conn.row_factory = aiosqlite.Row
         await self._ensure_schema()
+        await self._ensure_handled_at()
 
     async def close(self) -> None:
         if self._conn:
@@ -183,6 +184,56 @@ class BotStore:
                 """
             )
             await conn.commit()
+
+    async def _ensure_handled_at(self) -> None:
+        """When a card was closed, so it can be watched for a while afterwards."""
+        conn = self._require_conn()
+        try:
+            await conn.execute("ALTER TABLE reported_items ADD COLUMN handled_at REAL")
+        except Exception:
+            return  # already there, so the backfill below has already run too
+        # Cards closed before this column existed get the last time they were
+        # seen, which is close enough to put the recent ones back under watch.
+        await conn.execute(
+            "UPDATE reported_items SET handled_at = last_seen_at "
+            "WHERE handled = 1 AND handled_at IS NULL"
+        )
+        await conn.commit()
+
+    async def list_recently_handled_alerts(
+        self, setup_id: str, since_ts: float, limit: int = 50
+    ) -> list[tuple[str, int, int]]:
+        """Cards closed since the given time, still worth a second look.
+
+        A moderator removing something and putting it back a minute later is
+        ordinary, and the second action lands after the card has stopped being
+        refreshed, leaving it claiming the opposite of what is true.
+        """
+        conn = self._require_conn()
+        cursor = await conn.execute(
+            """
+            SELECT ri.fullname, ri.discord_channel_id, ri.discord_message_id
+            FROM reported_items AS ri
+            INNER JOIN alert_views AS av
+                ON av.message_id = ri.discord_message_id
+            WHERE
+                ri.setup_id = ?
+                AND ri.handled = 1
+                AND ri.handled_at IS NOT NULL
+                AND ri.handled_at >= ?
+                AND ri.discord_message_id IS NOT NULL
+                AND ri.discord_channel_id IS NOT NULL
+            ORDER BY ri.handled_at DESC
+            LIMIT ?
+            """,
+            (setup_id, since_ts, limit),
+        )
+        rows = await cursor.fetchall()
+        await cursor.close()
+        return [
+            (row["fullname"], int(row["discord_channel_id"]), int(row["discord_message_id"]))
+            for row in rows
+        ]
 
     async def should_alert(self, item: ReportedItem, setup_id: str, guild_id: int) -> bool:
         conn = self._require_conn()
@@ -344,8 +395,9 @@ class BotStore:
     async def mark_handled(self, fullname: str, setup_id: str) -> None:
         conn = self._require_conn()
         await conn.execute(
-            "UPDATE reported_items SET handled = 1 WHERE setup_id = ? AND fullname = ?",
-            (setup_id, fullname),
+            "UPDATE reported_items SET handled = 1, handled_at = ? "
+            "WHERE setup_id = ? AND fullname = ?",
+            (time.time(), setup_id, fullname),
         )
         await conn.commit()
 
@@ -353,7 +405,8 @@ class BotStore:
         """Put an item back in the queue, so it is refreshed and chased again."""
         conn = self._require_conn()
         await conn.execute(
-            "UPDATE reported_items SET handled = 0 WHERE setup_id = ? AND fullname = ?",
+            "UPDATE reported_items SET handled = 0, handled_at = NULL "
+            "WHERE setup_id = ? AND fullname = ?",
             (setup_id, fullname),
         )
         await conn.commit()
