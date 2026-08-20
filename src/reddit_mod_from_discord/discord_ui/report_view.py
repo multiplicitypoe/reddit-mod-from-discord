@@ -1160,30 +1160,54 @@ class ReportView(discord.ui.View):
         self.reddit = reddit
         self.allowed_role_ids = allowed_role_ids
         self.demo_mode = demo_mode
-        self.add_item(
-            discord.ui.Button(
-                label="Open on Reddit",
-                style=discord.ButtonStyle.link,
-                url=payload.permalink,
-                row=2,
-            )
+        # The rows the buttons were declared with, so the working card can be
+        # put back exactly as it was after somebody reopens the alert.
+        self._declared_rows = [(item, item.row) for item in self.children]
+        self._open_button = discord.ui.Button(
+            label="Open on Reddit",
+            style=discord.ButtonStyle.link,
+            url=payload.permalink,
+            row=2,
         )
-        more = MoreActionsSelect()
-        more.row = 1
-        self.add_item(more)
-        self._update_toggle_labels()
         if payload.handled:
-            self._disable_actions()
+            self._collapse_to_handled()
+        else:
+            self._restore_actions()
 
     def _update_toggle_labels(self) -> None:
         self.lock_button.label = "Unlock" if self.payload.locked else "Lock"
 
-    def _disable_actions(self) -> None:
-        for child in self.children:
-            if isinstance(child, discord.ui.Button) and child.style != discord.ButtonStyle.link:
-                child.disabled = True
-            if isinstance(child, discord.ui.Select):
-                child.disabled = True
+    def _collapse_to_handled(self) -> None:
+        """A closed alert needs two things: a way to look at the item, and a way
+        back if the wrong one got closed.
+
+        Everything else goes, rather than being greyed out. Disabled controls
+        left two rows of dead buttons under every card in the queue.
+        """
+        for child in list(self.children):
+            self.remove_item(child)
+        self._open_button.row = 0
+        self.add_item(self._open_button)
+        self.unhandle_button.row = 0
+        self.unhandle_button.disabled = False
+        self.add_item(self.unhandle_button)
+
+    def _restore_actions(self) -> None:
+        """The working card: every action on its declared row, the menu, the link."""
+        for child in list(self.children):
+            self.remove_item(child)
+        for item, row in self._declared_rows:
+            if item is self.unhandle_button:
+                continue
+            item.row = row
+            item.disabled = False
+            self.add_item(item)
+        self._open_button.row = 2
+        self.add_item(self._open_button)
+        more = MoreActionsSelect()
+        more.row = 1
+        self.add_item(more)
+        self._update_toggle_labels()
 
     async def _ensure_mod(self, interaction: discord.Interaction) -> bool:
         member = interaction.user if isinstance(interaction.user, discord.Member) else None
@@ -1584,6 +1608,53 @@ class ReportView(discord.ui.View):
         )
 
     @discord.ui.button(
+        label="Mark Unhandled",
+        style=discord.ButtonStyle.secondary,
+        custom_id="rmd_mark_unhandled",
+        row=0,
+    )
+    async def unhandle_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        """Put a closed alert back in the queue.
+
+        Mark Handled used to be a one way door, so a mis-press meant the alert
+        was gone with nothing to press to get it back.
+        """
+        if not await self._ensure_mod(interaction):
+            return
+        if not self.payload.handled:
+            await interaction.response.send_message("This one is already open.", ephemeral=True)
+            return
+        ref = self._message_ref_from_interaction(interaction)
+        if ref is None:
+            await interaction.response.send_message("Message context unavailable.", ephemeral=True)
+            return
+
+        if self.demo_mode:
+            self._append_action(interaction, "marked unhandled (demo)")
+            await interaction.response.defer()
+            await self._apply_message_update(interaction, ref)
+            return
+
+        self.payload.handled = False
+        self._append_action(interaction, "marked unhandled")
+        self._restore_actions()
+        start = time.monotonic()
+        await interaction.response.defer()
+        await self._apply_message_update(interaction, ref)
+        setup_id = self.payload.setup_id or str(ref.guild_id)
+        try:
+            await self.store.mark_unhandled(self.payload.fullname, setup_id)
+        except Exception:
+            logger.exception("Failed to reopen item: %s", self.payload.fullname)
+        total_s = time.monotonic() - start
+        self._log_action_timing(
+            interaction,
+            "marked unhandled",
+            total_s=total_s,
+            update_s=total_s,
+        )
+
+    @discord.ui.button(
         label="Mark Handled",
         style=discord.ButtonStyle.secondary,
         custom_id="rmd_mark_handled",
@@ -1617,7 +1688,7 @@ class ReportView(discord.ui.View):
 
         self.payload.handled = True
         self._append_action(interaction, "marked handled")
-        self._disable_actions()
+        self._collapse_to_handled()
         start = time.monotonic()
         await interaction.response.defer()
         await self._apply_message_update(interaction, ref)
