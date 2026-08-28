@@ -86,7 +86,7 @@ stop-docker:
 			$(DOCKER) stop "$(CONTAINER)" >/dev/null; \
 		fi; \
 		echo "Removing container $(CONTAINER)"; \
-		$(DOCKER) rm "$(CONTAINER)" >/dev/null; \
+		$(DOCKER) rm "$(CONTAINER)" >/dev/null 2>&1 || true; \
 	else \
 		echo "Container $(CONTAINER) not found; nothing to stop."; \
 	fi
