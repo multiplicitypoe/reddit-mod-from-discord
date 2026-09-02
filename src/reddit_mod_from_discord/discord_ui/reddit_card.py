@@ -78,9 +78,6 @@ def _font(weight: str, size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(_FONT_PATHS[weight], _s(size))
 
 
-_MAX_LINE_CHARS = 38  # cap the reading measure, not just the pixel width
-
-
 def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, max_width: int) -> list[str]:
     lines: list[str] = []
     for paragraph in text.splitlines() or [""]:
@@ -91,9 +88,7 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, ma
         current = words[0]
         for word in words[1:]:
             trial = f"{current} {word}"
-            fits_width = draw.textlength(trial, font=font) <= max_width
-            fits_chars = len(trial) <= _MAX_LINE_CHARS
-            if fits_width and fits_chars:
+            if draw.textlength(trial, font=font) <= max_width:
                 current = trial
             else:
                 lines.append(current)
@@ -117,7 +112,7 @@ def _wrap_capped(
         return lines
     kept = lines[:max_lines]
     last = kept[-1]
-    while last and (draw.textlength(last + "...", font=font) > max_width or len(last) + 3 > _MAX_LINE_CHARS):
+    while last and draw.textlength(last + "...", font=font) > max_width:
         last = last[:-1].rstrip()
     kept[-1] = f"{last}..." if last else "..."
     return kept
