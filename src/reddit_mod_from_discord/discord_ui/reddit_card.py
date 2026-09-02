@@ -97,27 +97,6 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, ma
     return lines
 
 
-def _wrap_capped(
-    draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, max_width: int, max_lines: int,
-) -> list[str]:
-    """Like _wrap, but never renders more than max_lines — context text
-    (a post body preview, a parent comment) should never grow to compete
-    with the actual reported comment for space. Cuts the last line short
-    and marks it with "..." when there's more than fits, whether that's
-    because the source text is long or because it already arrived
-    pre-truncated (with its own trailing "...", which this replaces rather
-    than doubles up on)."""
-    lines = _wrap(draw, text, font, max_width)
-    if len(lines) <= max_lines:
-        return lines
-    kept = lines[:max_lines]
-    last = kept[-1]
-    while last and draw.textlength(last + "...", font=font) > max_width:
-        last = last[:-1].rstrip()
-    kept[-1] = f"{last}..." if last else "..."
-    return kept
-
-
 def _draw_tracked(
     draw: ImageDraw.ImageDraw, xy: tuple[float, float], text: str, font: ImageFont.FreeTypeFont,
     fill: str, tracking: float = 0,
@@ -204,7 +183,7 @@ def _render(payload: ReportViewPayload) -> bytes:
     post_type_lines: list[str] = []
     if payload.post_is_self is True:
         if payload.post_selftext:
-            post_type_lines = _wrap_capped(measure, payload.post_selftext, f_posttype, content_w, max_lines=3)
+            post_type_lines = _wrap(measure, payload.post_selftext, f_posttype, content_w)
         else:
             post_type_lines = ["Text post — no body"]
     elif payload.post_is_self is False:
@@ -217,7 +196,7 @@ def _render(payload: ReportViewPayload) -> bytes:
     parent_lines: list[str] = []
     if has_parent:
         parent_body = (payload.parent_body or "").strip() or "[no text]"
-        parent_lines = _wrap_capped(measure, parent_body, f_pbody, content_w - parent_indent - _s(16), max_lines=3)
+        parent_lines = _wrap(measure, parent_body, f_pbody, content_w - parent_indent - _s(16))
 
     # The reported comment gets its own tinted, bordered box - without it,
     # nothing on the card actually marked which part was the reported
