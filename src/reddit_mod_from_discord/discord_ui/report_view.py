@@ -524,11 +524,17 @@ def build_report_attachment(payload: ReportViewPayload) -> discord.File | None:
 
 def build_report_message(payload: ReportViewPayload) -> tuple[discord.Embed, discord.File | None]:
     """The embed plus its optional Reddit-card attachment, built together so
-    the embed always correctly reflects whether a card is actually coming."""
+    the embed always correctly reflects whether a card is actually coming.
+
+    The card is deliberately NOT wired into the embed's own image slot.
+    Discord always renders an embed's image after its description and
+    fields, with no way to move it earlier - so referencing it there would
+    put the actual reported content last, under a screen of metadata. A
+    plain attachment that no embed references renders above every embed in
+    the message instead, which is the order that actually matters here:
+    see the content first, read the status/reasons/buttons after."""
     attachment = build_report_attachment(payload)
     embed = build_report_embed(payload, has_card=attachment is not None)
-    if attachment is not None:
-        embed.set_image(url=f"attachment://{attachment.filename}")
     return embed, attachment
 
 
