@@ -30,6 +30,7 @@ import functools
 import io
 import logging
 import time
+import zlib
 from urllib.parse import urlparse
 
 from PIL import Image, ImageDraw, ImageFont
@@ -131,7 +132,11 @@ def _draw_tracked(
 
 
 def _avatar_color(username: str) -> str:
-    return _AVATAR_COLORS[abs(hash(username)) % len(_AVATAR_COLORS)]
+    # Python's built-in hash() is randomized per-process (PYTHONHASHSEED),
+    # so it gave a different color to the same user every time the bot
+    # restarted. crc32 is stable across runs, which is the actual point of
+    # a per-user color - the same person should always get the same one.
+    return _AVATAR_COLORS[zlib.crc32(username.encode("utf-8")) % len(_AVATAR_COLORS)]
 
 
 def _draw_avatar(draw: ImageDraw.ImageDraw, x: int, y: int, d: int, username: str) -> None:
