@@ -6,11 +6,10 @@ comment that was actually reported. No vote arrows or action buttons —
 those would look interactive without being real, which is exactly what
 this is avoiding.
 
-Typeface is League Spartan, chosen to match the geometric-display voice a
-mod on this server's own site (fredtheatre.org) uses — an uppercase,
-wide-tracked eyebrow for the subreddit line, an extrabold title, and one
-confident family carrying the whole card rather than a generic system
-sans doing double duty.
+Typeface is League Spartan: an uppercase, wide-tracked eyebrow for the
+subreddit line, an extrabold title, and one confident geometric family
+carrying the whole card rather than a generic system sans doing double
+duty.
 
 Everything is drawn at 2x (_SCALE): Discord's embed column is narrower
 than a 600px-logical card, so it always downsamples the image somewhat,
@@ -221,12 +220,11 @@ def _render(payload: ReportViewPayload) -> bytes:
         parent_body = (payload.parent_body or "").strip() or "[no text]"
         parent_lines = _wrap_capped(measure, parent_body, f_pbody, content_w - parent_indent - _s(16), max_lines=3)
 
-    # The reported comment gets its own tinted, bordered box - Cas (a mod,
-    # and a working typographer/designer) flagged that without it, nothing
-    # on the card actually marked which part was the reported content
-    # versus surrounding context; position and a thin divider weren't
-    # enough to read as "this is the flagged thing" at a glance, especially
-    # at Discord's shrunk-down preview size.
+    # The reported comment gets its own tinted, bordered box - without it,
+    # nothing on the card actually marked which part was the reported
+    # content versus surrounding context; position and a thin divider
+    # weren't enough to read as "this is the flagged thing" at a glance,
+    # especially at Discord's shrunk-down preview size.
     comment_avatar_d = _s(34)
     comment_indent = comment_avatar_d + _s(12)
     box_pad = _s(14)
