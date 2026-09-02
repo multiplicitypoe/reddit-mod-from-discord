@@ -400,10 +400,12 @@ def build_report_embed(payload: ReportViewPayload) -> discord.Embed:
         if snippet_text:
             description_lines.append(f"**Text:** {snippet_text}")
     else:
-        # Comment report: the comment is the thing that got reported, so it
-        # leads and is blockquoted to stand out. The post it's under is
-        # context for the comment, not the headline — it's demoted to a
-        # muted "On: ..." line instead of the old top-billed "Title:".
+        # Comment report: the comment is the thing that got reported, so the
+        # description holds nothing else. Discord doesn't dim italic text —
+        # a same-brightness "On: title" line here would still out-weigh a
+        # short blockquote by sheer length, so the post title moves to its
+        # own field below instead, the same demotion Mod and Crypto Scam Bot
+        # Destroyer already give their own secondary facts.
         description_lines = []
         if snippet_text:
             description_lines.append(
@@ -412,7 +414,6 @@ def build_report_embed(payload: ReportViewPayload) -> discord.Embed:
         else:
             description_lines.append("_(comment text unavailable)_")
         description_lines.append("")
-        description_lines.append(f"On: *{_truncate(summary, 200)}*")
         description_lines.append(f"**Status:** {status_value}")
         if link_line:
             description_lines.append(link_line)
@@ -423,6 +424,13 @@ def build_report_embed(payload: ReportViewPayload) -> discord.Embed:
         embed.set_image(url=safe_media_url)
     elif safe_thumbnail_url:
         embed.set_thumbnail(url=safe_thumbnail_url)
+
+    if payload.kind != "submission":
+        embed.add_field(
+            name="Reported comment on",
+            value=_truncate(summary, 300),
+            inline=False,
+        )
 
     user_reports = _normalize_report_lines(payload.user_reports)
     mod_reports = _normalize_report_lines(payload.mod_reports)
