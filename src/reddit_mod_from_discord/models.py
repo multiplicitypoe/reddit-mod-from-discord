@@ -27,13 +27,6 @@ class ReportedItem:
     approved: bool
     user_reports: list[str] = field(default_factory=list)
     mod_reports: list[str] = field(default_factory=list)
-    # Only set when kind == "comment" and the comment is itself a reply to
-    # another comment (not a top-level reply to the submission).
-    parent_author: str | None = None
-    parent_body: str | None = None
-    # True when parent_author is itself a reply to another comment, i.e.
-    # there's a grandparent beyond what's shown.
-    parent_is_nested: bool = False
 
 
 @dataclass
@@ -57,9 +50,19 @@ class ReportViewPayload:
     approved: bool
     user_reports: list[str]
     mod_reports: list[str]
+    # The following are only ever set for kind == "comment", fetched once
+    # (RedditApi.fetch_comment_extras) when the report is first turned into
+    # a message, then persisted on the payload rather than refetched.
     parent_author: str | None = None
     parent_body: str | None = None
+    # True when parent_author is itself a reply to another comment, i.e.
+    # there's a grandparent beyond what's shown.
     parent_is_nested: bool = False
+    # None: not fetched. True: the post is a text/self post (post_selftext
+    # holds its body, possibly empty). False: a link post (link_url/
+    # media_url/thumbnail_url hold where it points).
+    post_is_self: bool | None = None
+    post_selftext: str | None = None
     handled: bool = False
     action_log: list[str] = field(default_factory=list)
     view_version: int = 1
@@ -89,9 +92,6 @@ class ReportViewPayload:
             approved=item.approved,
             user_reports=list(item.user_reports),
             mod_reports=list(item.mod_reports),
-            parent_author=item.parent_author,
-            parent_body=item.parent_body,
-            parent_is_nested=item.parent_is_nested,
             setup_id=setup_id,
         )
 
@@ -120,6 +120,8 @@ class ReportViewPayload:
             "parent_author": self.parent_author,
             "parent_body": self.parent_body,
             "parent_is_nested": self.parent_is_nested,
+            "post_is_self": self.post_is_self,
+            "post_selftext": self.post_selftext,
             "handled": self.handled,
             "action_log": self.action_log,
             "setup_id": self.setup_id,
@@ -158,6 +160,12 @@ class ReportViewPayload:
         parent_body = payload.get("parent_body")
         if not isinstance(parent_body, str):
             parent_body = None
+        post_is_self = payload.get("post_is_self")
+        if not isinstance(post_is_self, bool):
+            post_is_self = None
+        post_selftext = payload.get("post_selftext")
+        if not isinstance(post_selftext, str):
+            post_selftext = None
 
         return cls(
             view_version=int(payload.get("view_version", 1)),
@@ -183,6 +191,8 @@ class ReportViewPayload:
             parent_author=parent_author,
             parent_body=parent_body,
             parent_is_nested=bool(payload.get("parent_is_nested", False)),
+            post_is_self=post_is_self,
+            post_selftext=post_selftext,
             handled=bool(payload.get("handled", False)),
             action_log=[str(value) for value in action_log],
             setup_id=setup_id,

@@ -272,6 +272,16 @@ class RedditModBot(discord.Client):
         except Exception:
             pass
 
+        if payload.kind == "comment":
+            try:
+                extras = await runtime.reddit.fetch_comment_extras(payload.fullname)
+            except Exception:
+                logger.exception("Failed to fetch comment extras for demo alert")
+                extras = {}
+            for key, value in extras.items():
+                if hasattr(payload, key):
+                    setattr(payload, key, value)
+
         view = ReportView(
             payload=payload,
             store=self.store,
@@ -631,6 +641,19 @@ class RedditModBot(discord.Client):
                             payload.action_log.extend(history)
                     except Exception:
                         logger.exception("Failed to load modlog cache for %s", payload.fullname)
+
+                if payload.kind == "comment":
+                    # Reply context and post-type context, fetched once here
+                    # and then persisted on the payload with everything
+                    # else - later edits reuse it rather than refetching.
+                    try:
+                        extras = await runtime.reddit.fetch_comment_extras(payload.fullname)
+                    except Exception:
+                        logger.exception("Failed to fetch comment extras for %s", payload.fullname)
+                        extras = {}
+                    for key, value in extras.items():
+                        if hasattr(payload, key):
+                            setattr(payload, key, value)
 
                 view = ReportView(
                     payload=payload,

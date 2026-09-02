@@ -37,6 +37,8 @@ class RedditApi(Protocol):
 
     async def refresh_state(self, fullname: str) -> dict[str, object]: ...
 
+    async def fetch_comment_extras(self, fullname: str) -> dict[str, object]: ...
+
     async def reply(self, fullname: str, body: str, sticky: bool, lock: bool) -> str | None: ...
 
     async def ban_user(
@@ -263,6 +265,50 @@ class RedditService:
         parent_is_nested = str(getattr(parent, "parent_id", "")).startswith("t1_")
         return parent_author, parent_body, parent_is_nested
 
+    def _fetch_comment_extras_sync(self, fullname: str) -> dict[str, object]:
+        """Reply context and post-type context for one reported comment:
+        who it's replying to, and whether the post it's under is a text
+        post (with a body snippet), a link post (with the domain), or has
+        no fetchable context. Called once, when a comment report is first
+        turned into a Discord message — not on every poll, since none of
+        this ever changes after the comment was posted."""
+        try:
+            thing = self._thing_from_fullname(fullname)
+        except Exception:
+            return {}
+        if not isinstance(thing, Comment):
+            return {}
+
+        extras: dict[str, object] = {}
+        parent_author, parent_body, parent_is_nested = self._fetch_parent_context(thing)
+        extras["parent_author"] = parent_author
+        extras["parent_body"] = parent_body
+        extras["parent_is_nested"] = parent_is_nested
+
+        try:
+            submission = thing.submission
+            is_self = bool(getattr(submission, "is_self", False))
+            extras["post_is_self"] = is_self
+            if is_self:
+                extras["post_selftext"] = _truncate(
+                    _squash_whitespace(getattr(submission, "selftext", "") or ""), 300
+                )
+            else:
+                # A self post's own `.url` is just its own permalink, not
+                # an external link, so only extract link/media for an
+                # actual link post.
+                link_url, media_url, thumbnail_url = self._extract_submission_media(submission)
+                extras["link_url"] = link_url
+                extras["media_url"] = media_url
+                extras["thumbnail_url"] = thumbnail_url
+        except Exception:
+            logger.exception("Failed to fetch submission context for %s", fullname)
+
+        return extras
+
+    async def fetch_comment_extras(self, fullname: str) -> dict[str, object]:
+        return await self._run(self._fetch_comment_extras_sync, fullname)
+
     def _fetch_reports_sync(self) -> list[ReportedItem]:
         subreddit = self._reddit.subreddit(self.settings.reddit_subreddit)
         items: list[ReportedItem] = []
@@ -272,15 +318,11 @@ class RedditService:
             media_url: str | None = None
             thumbnail_url: str | None = None
             num_comments: int | None = None
-            parent_author: str | None = None
-            parent_body: str | None = None
-            parent_is_nested = False
             if isinstance(thing, Comment):
                 kind = "comment"
                 title = getattr(thing, "link_title", "Comment") or "Comment"
                 body = getattr(thing, "body", "") or ""
                 snippet = body
-                parent_author, parent_body, parent_is_nested = self._fetch_parent_context(thing)
             elif isinstance(thing, Submission):
                 kind = "submission"
                 title = getattr(thing, "title", "Submission") or "Submission"
@@ -338,9 +380,6 @@ class RedditService:
                     approved=bool(getattr(thing, "approved_by", None)),
                     user_reports=user_reports,
                     mod_reports=mod_reports,
-                    parent_author=parent_author,
-                    parent_body=parent_body,
-                    parent_is_nested=parent_is_nested,
                 )
             )
 
@@ -810,6 +849,17 @@ class DemoRedditService:
 
     async def refresh_state(self, fullname: str) -> dict[str, object]:
         return dict(self._state.get(fullname, {}))
+
+    async def fetch_comment_extras(self, fullname: str) -> dict[str, object]:
+        # Canned example so the demo alert actually shows the card's reply-
+        # context and post-type rendering, not just the bare comment.
+        return {
+            "parent_author": "demo_other_user",
+            "parent_body": "This is the comment the demo reply is responding to.",
+            "parent_is_nested": False,
+            "post_is_self": True,
+            "post_selftext": "This is the demo post's own body text, shown so you can see how a text post's body renders in the card.",
+        }
 
     async def reply(self, fullname: str, body: str, sticky: bool, lock: bool) -> str | None:
         stamp = int(time.time())

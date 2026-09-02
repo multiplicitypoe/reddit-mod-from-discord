@@ -1,8 +1,10 @@
 """Render a reported comment as a PNG styled like modern Reddit's comment
-card: full post title, the comment being replied to (if any), then the
-comment that was actually reported. No vote arrows or action buttons — those
-would look interactive without being real, which is exactly what this is
-avoiding.
+card: full post title, what kind of post it's under (text body preview or
+link domain — so a reviewer never has to guess whether there's more to the
+post than the title), the comment being replied to (if any), then the
+comment that was actually reported. No vote arrows or action buttons —
+those would look interactive without being real, which is exactly what
+this is avoiding.
 
 Text-only fallback stays in report_view.py if this fails for any reason
 (missing fonts, bad input); nothing here should ever be allowed to break
@@ -16,6 +18,7 @@ import functools
 import io
 import logging
 import time
+from urllib.parse import urlparse
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -38,13 +41,17 @@ _SNOO = "#FF4500"
 
 _AVATAR_COLORS = ["#FF4500", "#0079D3", "#46D160", "#FFB000", "#7E53C1", "#019A75", "#EA0027"]
 
-_FONT_REGULAR = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-_FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+_FONT_DIR = "/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF"
+_FONT_PATHS = {
+    "regular": f"{_FONT_DIR}/Roboto-Regular.ttf",
+    "medium": f"{_FONT_DIR}/Roboto-Medium.ttf",
+    "bold": f"{_FONT_DIR}/Roboto-Bold.ttf",
+}
 
 
-@functools.lru_cache(maxsize=16)
-def _font(bold: bool, size: int) -> ImageFont.FreeTypeFont:
-    return ImageFont.truetype(_FONT_BOLD if bold else _FONT_REGULAR, size)
+@functools.lru_cache(maxsize=24)
+def _font(weight: str, size: int) -> ImageFont.FreeTypeFont:
+    return ImageFont.truetype(_FONT_PATHS[weight], size)
 
 
 def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, max_width: int) -> list[str]:
@@ -73,7 +80,7 @@ def _avatar_color(username: str) -> str:
 def _draw_avatar(draw: ImageDraw.ImageDraw, x: int, y: int, d: int, username: str) -> None:
     draw.ellipse([x, y, x + d, y + d], fill=_avatar_color(username))
     initial = (username or "?")[:1].upper()
-    font = _font(True, max(10, d // 2))
+    font = _font("bold", max(10, d // 2))
     bbox = draw.textbbox((0, 0), initial, font=font)
     w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
     draw.text((x + d / 2 - w / 2 - bbox[0], y + d / 2 - h / 2 - bbox[1]), initial, font=font, fill="#FFFFFF")
@@ -90,6 +97,16 @@ def _age(ts: float) -> str:
     return f"{delta // 86400}d"
 
 
+def _domain(url: str | None) -> str | None:
+    if not url:
+        return None
+    try:
+        netloc = urlparse(url).netloc
+    except Exception:
+        return None
+    return netloc[4:] if netloc.startswith("www.") else netloc or None
+
+
 def render_reddit_card(payload: ReportViewPayload) -> bytes | None:
     try:
         return _render(payload)
@@ -99,19 +116,32 @@ def render_reddit_card(payload: ReportViewPayload) -> bytes | None:
 
 
 def _render(payload: ReportViewPayload) -> bytes:
-    f_sub = _font(True, 12)
-    f_title = _font(True, 18)
-    f_name = _font(True, 13)
-    f_meta = _font(False, 12)
-    f_body = _font(False, 15)
-    f_pbody = _font(False, 13)
-    f_hint = _font(False, 11)
+    f_sub = _font("bold", 12)
+    f_title = _font("bold", 18)
+    f_posttype = _font("regular", 13)
+    f_name = _font("medium", 13)
+    f_meta = _font("regular", 12)
+    f_body = _font("regular", 15)
+    f_pbody = _font("regular", 13)
+    f_hint = _font("regular", 11)
 
     measure_img = Image.new("RGB", (10, 10))
     measure = ImageDraw.Draw(measure_img)
 
     content_w = _WIDTH - 2 * _PAD
     title_lines = _wrap(measure, payload.title or "(no title)", f_title, content_w)
+
+    # What kind of post this comment sits under, so a reviewer never has to
+    # guess whether there's a body they aren't seeing.
+    post_type_lines: list[str] = []
+    if payload.post_is_self is True:
+        if payload.post_selftext:
+            post_type_lines = _wrap(measure, payload.post_selftext, f_posttype, content_w)
+        else:
+            post_type_lines = ["Text post — no body"]
+    elif payload.post_is_self is False:
+        domain = _domain(payload.link_url)
+        post_type_lines = [f"Link post · {domain}" if domain else "Link post"]
 
     has_parent = bool(payload.parent_author)
     parent_avatar_d = 22
@@ -128,6 +158,8 @@ def _render(payload: ReportViewPayload) -> bytes:
     y = _PAD
     y += f_sub.size + 6  # subreddit line
     y += len(title_lines) * (f_title.size + 6) + 4
+    if post_type_lines:
+        y += len(post_type_lines) * (f_posttype.size + 4) + 6
     y += 1 + 14  # divider + gap
 
     if has_parent:
@@ -156,12 +188,18 @@ def _render(payload: ReportViewPayload) -> bytes:
         cy += f_title.size + 6
     cy += 4
 
+    for line in post_type_lines:
+        draw.text((_PAD, cy), line, font=f_posttype, fill=_MUTED)
+        cy += f_posttype.size + 4
+    if post_type_lines:
+        cy += 2
+
     draw.line([(_PAD, cy), (_WIDTH - _PAD, cy)], fill=_DIVIDER, width=1)
     cy += 14
 
     if has_parent:
         if payload.parent_is_nested:
-            draw.text((_PAD, cy), "⋯ replying further up — see full thread", font=f_hint, fill=_SUBTLE)
+            draw.text((_PAD, cy), "... replying further up — see full thread", font=f_hint, fill=_SUBTLE)
             cy += f_hint.size + 6
         row_top = cy
         _draw_avatar(draw, _PAD, row_top, parent_avatar_d, payload.parent_author or "?")
