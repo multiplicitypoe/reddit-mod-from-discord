@@ -246,6 +246,23 @@ class RedditService:
 
         return link_url, media_url, thumbnail_url
 
+    @staticmethod
+    def _fetch_parent_context(comment: Comment) -> tuple[str | None, str | None, bool]:
+        """Who a reported comment is replying to, for the report card's
+        context bubble. Best-effort: any failure here (deleted parent,
+        network hiccup) just means the card renders without it."""
+        try:
+            parent = comment.parent()
+        except Exception:
+            return None, None, False
+        if not isinstance(parent, Comment):
+            return None, None, False
+        parent_author_obj = getattr(parent, "author", None)
+        parent_author = getattr(parent_author_obj, "name", "[deleted]") if parent_author_obj else "[deleted]"
+        parent_body = _truncate(_squash_whitespace(getattr(parent, "body", "") or ""), 300)
+        parent_is_nested = str(getattr(parent, "parent_id", "")).startswith("t1_")
+        return parent_author, parent_body, parent_is_nested
+
     def _fetch_reports_sync(self) -> list[ReportedItem]:
         subreddit = self._reddit.subreddit(self.settings.reddit_subreddit)
         items: list[ReportedItem] = []
@@ -255,11 +272,15 @@ class RedditService:
             media_url: str | None = None
             thumbnail_url: str | None = None
             num_comments: int | None = None
+            parent_author: str | None = None
+            parent_body: str | None = None
+            parent_is_nested = False
             if isinstance(thing, Comment):
                 kind = "comment"
                 title = getattr(thing, "link_title", "Comment") or "Comment"
                 body = getattr(thing, "body", "") or ""
                 snippet = body
+                parent_author, parent_body, parent_is_nested = self._fetch_parent_context(thing)
             elif isinstance(thing, Submission):
                 kind = "submission"
                 title = getattr(thing, "title", "Submission") or "Submission"
@@ -300,7 +321,10 @@ class RedditService:
                     link_url=link_url,
                     media_url=media_url,
                     thumbnail_url=thumbnail_url,
-                    title=_truncate(_squash_whitespace(title), 250),
+                    # Reddit's own title cap is 300 chars, so this is
+                    # effectively "never truncate a real title" rather than
+                    # an actual limit.
+                    title=_truncate(_squash_whitespace(title), 300),
                     snippet=_truncate(_squash_whitespace(snippet), 800),
                     num_reports=num_reports,
                     created_utc=created_utc,
@@ -314,6 +338,9 @@ class RedditService:
                     approved=bool(getattr(thing, "approved_by", None)),
                     user_reports=user_reports,
                     mod_reports=mod_reports,
+                    parent_author=parent_author,
+                    parent_body=parent_body,
+                    parent_is_nested=parent_is_nested,
                 )
             )
 

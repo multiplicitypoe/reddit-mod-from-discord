@@ -13,7 +13,9 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates tzdata; \
+    apt-get install -y --no-install-recommends \
+        ca-certificates tzdata fonts-dejavu-core \
+        libjpeg62-turbo libtiff6 libopenjp2-7 libwebp7 liblcms2-2 libfreetype6 libxcb1; \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /app/requirements.txt

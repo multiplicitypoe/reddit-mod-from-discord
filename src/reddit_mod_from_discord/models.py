@@ -27,6 +27,13 @@ class ReportedItem:
     approved: bool
     user_reports: list[str] = field(default_factory=list)
     mod_reports: list[str] = field(default_factory=list)
+    # Only set when kind == "comment" and the comment is itself a reply to
+    # another comment (not a top-level reply to the submission).
+    parent_author: str | None = None
+    parent_body: str | None = None
+    # True when parent_author is itself a reply to another comment, i.e.
+    # there's a grandparent beyond what's shown.
+    parent_is_nested: bool = False
 
 
 @dataclass
@@ -50,6 +57,9 @@ class ReportViewPayload:
     approved: bool
     user_reports: list[str]
     mod_reports: list[str]
+    parent_author: str | None = None
+    parent_body: str | None = None
+    parent_is_nested: bool = False
     handled: bool = False
     action_log: list[str] = field(default_factory=list)
     view_version: int = 1
@@ -79,6 +89,9 @@ class ReportViewPayload:
             approved=item.approved,
             user_reports=list(item.user_reports),
             mod_reports=list(item.mod_reports),
+            parent_author=item.parent_author,
+            parent_body=item.parent_body,
+            parent_is_nested=item.parent_is_nested,
             setup_id=setup_id,
         )
 
@@ -104,6 +117,9 @@ class ReportViewPayload:
             "approved": self.approved,
             "user_reports": self.user_reports,
             "mod_reports": self.mod_reports,
+            "parent_author": self.parent_author,
+            "parent_body": self.parent_body,
+            "parent_is_nested": self.parent_is_nested,
             "handled": self.handled,
             "action_log": self.action_log,
             "setup_id": self.setup_id,
@@ -136,6 +152,12 @@ class ReportViewPayload:
         thumbnail_url = payload.get("thumbnail_url")
         if not isinstance(thumbnail_url, str) or not thumbnail_url.strip():
             thumbnail_url = None
+        parent_author = payload.get("parent_author")
+        if not isinstance(parent_author, str) or not parent_author.strip():
+            parent_author = None
+        parent_body = payload.get("parent_body")
+        if not isinstance(parent_body, str):
+            parent_body = None
 
         return cls(
             view_version=int(payload.get("view_version", 1)),
@@ -158,6 +180,9 @@ class ReportViewPayload:
             approved=bool(payload.get("approved", False)),
             user_reports=[str(value) for value in user_reports],
             mod_reports=[str(value) for value in mod_reports],
+            parent_author=parent_author,
+            parent_body=parent_body,
+            parent_is_nested=bool(payload.get("parent_is_nested", False)),
             handled=bool(payload.get("handled", False)),
             action_log=[str(value) for value in action_log],
             setup_id=setup_id,
