@@ -409,7 +409,7 @@ def load_settings() -> Settings:
     demo_mode = _env_bool("DEMO_MODE", False)
     demo_post_url = _env(
         "DEMO_POST_URL",
-        "https://old.reddit.com/r/example/comments/1qufcnu/code_lyoko_chatgpt/",
+        "https://old.reddit.com/r/example/comments/1qufcnu/example_post/",
     )
 
     reddit_client_id = _env_optional("REDDIT_CLIENT_ID")
