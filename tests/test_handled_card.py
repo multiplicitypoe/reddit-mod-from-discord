@@ -23,9 +23,9 @@ def payload(**kw):
     base = dict(
         fullname="t3_abc",
         kind="submission",
-        subreddit="pathofexile",
+        subreddit="examplesub",
         author="someone",
-        permalink="https://reddit.com/r/pathofexile/comments/abc",
+        permalink="https://reddit.com/r/examplesub/comments/abc",
         link_url=None,
         media_url=None,
         thumbnail_url=None,

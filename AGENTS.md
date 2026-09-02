@@ -15,11 +15,11 @@ Specifically, never commit:
   messages, or PR descriptions.
 - **Real Reddit usernames**, reported or otherwise.
 - **Real subreddit names** in example data, test fixtures, or docs. This
-  is not hypothetical: a demo-post URL default in this codebase left a
-  real subreddit's identity readable in a post slug
-  (`.../code_lyoko_chatgpt/`) even after the subreddit segment itself had
-  already been anonymized to `r/example`. Check the *whole* string, not
-  just the obvious part.
+  is not hypothetical: a demo-post URL default in this codebase named the
+  actual community in its post slug even after the subreddit segment of
+  the same URL had already been anonymized to `r/example` - the real name
+  just moved to a different part of the same string. Check the *whole*
+  string, not just the obvious part.
 - **Real people's names**, including moderators, contributors, or anyone
   mentioned in an issue or incident this code happens to address.
 - Real message or report content pulled from an actual server, even

@@ -100,7 +100,7 @@ Note: `DISCORD_ALLOWED_ROLE_IDS` are server-specific. If you move the bot to a n
 If you delete Discord messages while testing and want the bot to treat items as new again, clear the stored history:
 
 ```bash
-CLEAR_SETUP_ID=pathofexile make clear-history
+CLEAR_SETUP_ID=your_setup_id make clear-history
 ```
 
 `CLEAR_SETUP_ID` must match a key in `multi_server_config.json`. This clears reported-item history, stored views, and cached mod-log entries for that setup.
