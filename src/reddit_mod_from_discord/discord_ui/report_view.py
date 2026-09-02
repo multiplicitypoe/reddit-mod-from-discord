@@ -370,27 +370,52 @@ def build_report_embed(payload: ReportViewPayload) -> discord.Embed:
     else:
         status_value = "active"
 
-    description_lines = [f"**Title:** {_truncate(summary, 300)}"]
-    description_lines.append(f"**Status:** {status_value}")
-    if payload.kind == "submission" and payload.num_comments is not None:
-        description_lines.append(f"**Comments:** {payload.num_comments}")
-
-    if (
-        safe_link_url
-        and safe_link_url != safe_permalink
-        and safe_link_url != safe_media_url
-    ):
-        description_lines.append(f"**Link:** {safe_link_url}")
-
+    # The reported text ("snippet") is computed once; how it's shown differs
+    # by kind below, since a comment's own words are what got reported, while
+    # a submission's title already is the headline.
+    snippet_text = ""
     if payload.snippet:
         raw_snippet = payload.snippet.strip()
         safe_snippet = sanitize_http_url(raw_snippet)
         if safe_snippet and safe_snippet in {safe_link_url, safe_permalink, safe_media_url}:
             raw_snippet = ""
         if raw_snippet:
+            snippet_text = _truncate(_escape_discord_text(raw_snippet), 900)
+
+    link_line = None
+    if (
+        safe_link_url
+        and safe_link_url != safe_permalink
+        and safe_link_url != safe_media_url
+    ):
+        link_line = f"**Link:** {safe_link_url}"
+
+    if payload.kind == "submission":
+        description_lines = [f"**Title:** {_truncate(summary, 300)}"]
+        description_lines.append(f"**Status:** {status_value}")
+        if payload.num_comments is not None:
+            description_lines.append(f"**Comments:** {payload.num_comments}")
+        if link_line:
+            description_lines.append(link_line)
+        if snippet_text:
+            description_lines.append(f"**Text:** {snippet_text}")
+    else:
+        # Comment report: the comment is the thing that got reported, so it
+        # leads and is blockquoted to stand out. The post it's under is
+        # context for the comment, not the headline — it's demoted to a
+        # muted "On: ..." line instead of the old top-billed "Title:".
+        description_lines = []
+        if snippet_text:
             description_lines.append(
-                f"**Text:** {_truncate(_escape_discord_text(raw_snippet), 900)}"
+                "\n".join(f"> {line}" for line in snippet_text.splitlines())
             )
+        else:
+            description_lines.append("_(comment text unavailable)_")
+        description_lines.append("")
+        description_lines.append(f"On: *{_truncate(summary, 200)}*")
+        description_lines.append(f"**Status:** {status_value}")
+        if link_line:
+            description_lines.append(link_line)
 
     embed.description = "\n".join(description_lines)
 
