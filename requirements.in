@@ -8,3 +8,4 @@ discord.py==2.4.0
 praw==7.7.1
 aiosqlite==0.20.0
 python-dotenv==1.0.1
+Pillow==11.2.1

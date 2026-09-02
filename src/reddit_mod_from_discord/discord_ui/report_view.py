@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import os
 import re
@@ -11,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 import discord
 
+from reddit_mod_from_discord.discord_ui.reddit_card import render_reddit_card
 from reddit_mod_from_discord.models import ReportViewPayload
 from reddit_mod_from_discord.permissions import is_allowed_moderator
 from reddit_mod_from_discord.reddit_client import RedditApi
@@ -336,7 +338,17 @@ def _format_duration(seconds: float) -> str:
     return f"{seconds:.2f}s"
 
 
-def build_report_embed(payload: ReportViewPayload) -> discord.Embed:
+def _context_permalink(permalink: str, kind: str) -> str:
+    """Append Reddit's context param so the link opens the full thread
+    around a comment rather than just that one isolated reply. Meaningless
+    for a submission link, so left untouched there."""
+    if kind != "comment" or not permalink:
+        return permalink
+    sep = "&" if "?" in permalink else "?"
+    return f"{permalink}{sep}context=1000"
+
+
+def build_report_embed(payload: ReportViewPayload, *, has_card: bool = False) -> discord.Embed:
     thing_label = "Post" if payload.kind == "submission" else "Comment"
     if payload.handled:
         color = discord.Color.green()
@@ -348,11 +360,12 @@ def build_report_embed(payload: ReportViewPayload) -> discord.Embed:
     safe_media_url = sanitize_http_url(payload.media_url)
     safe_thumbnail_url = sanitize_http_url(payload.thumbnail_url)
     safe_link_url = sanitize_http_url(payload.link_url)
+    embed_url = _context_permalink(safe_permalink, payload.kind) if safe_permalink else safe_permalink
 
     subreddit = _escape_discord_text(payload.subreddit)
     author = _escape_discord_text(payload.author or "[deleted]")
     title = f"Reported {thing_label} in /r/{subreddit} by {author}"
-    embed = discord.Embed(title=_truncate(title, 256), color=color, url=safe_permalink)
+    embed = discord.Embed(title=_truncate(title, 256), color=color, url=embed_url)
     summary = _escape_discord_text(payload.title if payload.title else thing_label)
     status: list[str] = []
     if payload.approved:
@@ -399,13 +412,19 @@ def build_report_embed(payload: ReportViewPayload) -> discord.Embed:
             description_lines.append(link_line)
         if snippet_text:
             description_lines.append(f"**Text:** {snippet_text}")
+    elif has_card:
+        # A rendered Reddit-style card carries the comment, its context, and
+        # the post title, so the description only needs the state that isn't
+        # visual.
+        description_lines = [f"**Status:** {status_value}"]
+        if link_line:
+            description_lines.append(link_line)
     else:
-        # Comment report: the comment is the thing that got reported, so the
-        # description holds nothing else. Discord doesn't dim italic text —
-        # a same-brightness "On: title" line here would still out-weigh a
-        # short blockquote by sheer length, so the post title moves to its
-        # own field below instead, the same demotion Mod and Crypto Scam Bot
-        # Destroyer already give their own secondary facts.
+        # Fallback for when the card couldn't be rendered (e.g. fonts
+        # unavailable): same text-only layout as before the image existed.
+        # Discord doesn't dim italic text, so the post title gets its own
+        # field rather than a same-brightness "On: title" line that would
+        # out-weigh a short blockquote by sheer length.
         description_lines = []
         if snippet_text:
             description_lines.append(
@@ -420,17 +439,18 @@ def build_report_embed(payload: ReportViewPayload) -> discord.Embed:
 
     embed.description = "\n".join(description_lines)
 
-    if safe_media_url:
-        embed.set_image(url=safe_media_url)
-    elif safe_thumbnail_url:
-        embed.set_thumbnail(url=safe_thumbnail_url)
+    if not has_card:
+        if safe_media_url:
+            embed.set_image(url=safe_media_url)
+        elif safe_thumbnail_url:
+            embed.set_thumbnail(url=safe_thumbnail_url)
 
-    if payload.kind != "submission":
-        embed.add_field(
-            name="Reported comment on",
-            value=_truncate(summary, 300),
-            inline=False,
-        )
+        if payload.kind != "submission":
+            embed.add_field(
+                name="Reported comment on",
+                value=_truncate(summary, 300),
+                inline=False,
+            )
 
     user_reports = _normalize_report_lines(payload.user_reports)
     mod_reports = _normalize_report_lines(payload.mod_reports)
@@ -461,6 +481,45 @@ def build_report_embed(payload: ReportViewPayload) -> discord.Embed:
     if payload.created_utc > 0:
         embed.set_footer(text=f"Posted {_relative_age(payload.created_utc)}")
     return embed
+
+
+def build_report_attachment(payload: ReportViewPayload) -> discord.File | None:
+    """The rendered Reddit-style card for a comment report, as a file with
+    real accessible alt text. Returns None for submissions (nothing to
+    render beyond the title, which the embed already shows) and whenever
+    rendering fails for any reason — callers fall back to the text-only
+    embed in that case, so a bad render never blocks report delivery."""
+    if payload.kind != "comment":
+        return None
+    png_bytes = render_reddit_card(payload)
+    if png_bytes is None:
+        return None
+
+    alt_parts = [f"Comment by u/{payload.author or '[deleted]'}"]
+    if payload.parent_author:
+        alt_parts.append(
+            f", replying to u/{payload.parent_author}: "
+            f"“{_truncate(payload.parent_body or '', 200)}”"
+        )
+    alt_parts.append(
+        f", on “{_truncate(payload.title, 200)}” in r/{payload.subreddit}: "
+        f"“{_truncate(payload.snippet, 400)}”"
+    )
+    alt_text = _truncate("".join(alt_parts), 1024)
+
+    safe_id = re.sub(r"[^A-Za-z0-9_-]", "", payload.fullname) or "report"
+    filename = f"report-{safe_id}.png"
+    return discord.File(io.BytesIO(png_bytes), filename=filename, description=alt_text)
+
+
+def build_report_message(payload: ReportViewPayload) -> tuple[discord.Embed, discord.File | None]:
+    """The embed plus its optional Reddit-card attachment, built together so
+    the embed always correctly reflects whether a card is actually coming."""
+    attachment = build_report_attachment(payload)
+    embed = build_report_embed(payload, has_card=attachment is not None)
+    if attachment is not None:
+        embed.set_image(url=f"attachment://{attachment.filename}")
+    return embed, attachment
 
 
 @dataclass(frozen=True)
@@ -1199,7 +1258,7 @@ class ReportView(discord.ui.View):
         self._open_button = discord.ui.Button(
             label="Open on Reddit",
             style=discord.ButtonStyle.link,
-            url=payload.permalink,
+            url=_context_permalink(payload.permalink, payload.kind),
             row=2,
         )
         if payload.handled:
@@ -1410,8 +1469,12 @@ class ReportView(discord.ui.View):
     async def _apply_message_update(self, interaction: discord.Interaction, ref: MessageRef) -> None:
         msg = await self._fetch_message_for_ref(interaction, ref)
         if msg is not None:
+            embed, attachment = build_report_message(self.payload)
+            edit_kwargs: dict[str, object] = {"embed": embed, "view": self}
+            if attachment is not None:
+                edit_kwargs["attachments"] = [attachment]
             try:
-                await msg.edit(embed=build_report_embed(self.payload), view=self)
+                await msg.edit(**edit_kwargs)
             except (discord.Forbidden, discord.NotFound, discord.HTTPException):
                 logger.exception("Failed to edit alert message %s", ref.message_id)
         try:

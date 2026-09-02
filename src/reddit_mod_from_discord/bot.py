@@ -13,7 +13,7 @@ from discord import app_commands
 from dotenv import load_dotenv
 
 from reddit_mod_from_discord.config import ResolvedSettings, Settings, load_settings, resolve_settings
-from reddit_mod_from_discord.discord_ui.report_view import ReportView, build_report_embed
+from reddit_mod_from_discord.discord_ui.report_view import ReportView, build_report_message
 from reddit_mod_from_discord.logging_filters import install_discord_reconnect_log_compaction
 from reddit_mod_from_discord.models import ReportViewPayload, ReportedItem
 from reddit_mod_from_discord.permissions import is_allowed_moderator
@@ -279,13 +279,17 @@ class RedditModBot(discord.Client):
             allowed_role_ids=runtime.allowed_role_ids,
             demo_mode=True,
         )
+        embed, attachment = build_report_message(payload)
+        send_kwargs: dict[str, object] = {
+            "embed": embed,
+            "view": view,
+            "allowed_mentions": discord.AllowedMentions.none(),
+            "silent": runtime.settings.discord_silent_notifications,
+        }
+        if attachment is not None:
+            send_kwargs["file"] = attachment
         try:
-            sent = await channel.send(
-                embed=build_report_embed(payload),
-                view=view,
-                allowed_mentions=discord.AllowedMentions.none(),
-                silent=runtime.settings.discord_silent_notifications,
-            )
+            sent = await channel.send(**send_kwargs)
         except discord.Forbidden:
             logger.error(
                 "Cannot send to #%s (%s): Missing Access. Check channel permissions for the bot role.",
@@ -636,13 +640,17 @@ class RedditModBot(discord.Client):
                     demo_mode=self.settings.demo_mode,
                 )
 
+                embed, attachment = build_report_message(payload)
+                send_kwargs: dict[str, object] = {
+                    "embed": embed,
+                    "view": view,
+                    "allowed_mentions": discord.AllowedMentions.none(),
+                    "silent": runtime.settings.discord_silent_notifications,
+                }
+                if attachment is not None:
+                    send_kwargs["file"] = attachment
                 try:
-                    sent = await channel.send(
-                        embed=build_report_embed(payload),
-                        view=view,
-                        allowed_mentions=discord.AllowedMentions.none(),
-                        silent=runtime.settings.discord_silent_notifications,
-                    )
+                    sent = await channel.send(**send_kwargs)
                 except (discord.Forbidden, discord.HTTPException):
                     logger.exception("Failed to post alert for %s", payload.fullname)
                     continue
@@ -996,7 +1004,11 @@ class RedditModBot(discord.Client):
             demo_mode=self.settings.demo_mode,
         )
         try:
-            await message.edit(embed=build_report_embed(payload), view=view)
+            embed, attachment = build_report_message(payload)
+            edit_kwargs: dict[str, object] = {"embed": embed, "view": view}
+            if attachment is not None:
+                edit_kwargs["attachments"] = [attachment]
+            await message.edit(**edit_kwargs)
         except discord.NotFound:
             try:
                 await self.store.clear_discord_message(fullname, runtime.setup_id)
