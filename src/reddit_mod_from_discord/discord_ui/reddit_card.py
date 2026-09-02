@@ -6,6 +6,12 @@ comment that was actually reported. No vote arrows or action buttons —
 those would look interactive without being real, which is exactly what
 this is avoiding.
 
+Typeface is League Spartan, chosen to match the geometric-display voice a
+mod on this server's own site (fredtheatre.org) uses — an uppercase,
+wide-tracked eyebrow for the subreddit line, an extrabold title, and one
+confident family carrying the whole card rather than a generic system
+sans doing double duty.
+
 Text-only fallback stays in report_view.py if this fails for any reason
 (missing fonts, bad input); nothing here should ever be allowed to break
 report delivery, so every public entry point catches broadly and returns
@@ -41,11 +47,13 @@ _SNOO = "#FF4500"
 
 _AVATAR_COLORS = ["#FF4500", "#0079D3", "#46D160", "#FFB000", "#7E53C1", "#019A75", "#EA0027"]
 
-_FONT_DIR = "/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF"
+_FONT_DIR = "/usr/share/fonts/opentype/league-spartan"
 _FONT_PATHS = {
-    "regular": f"{_FONT_DIR}/Roboto-Regular.ttf",
-    "medium": f"{_FONT_DIR}/Roboto-Medium.ttf",
-    "bold": f"{_FONT_DIR}/Roboto-Bold.ttf",
+    "regular": f"{_FONT_DIR}/LeagueSpartan-Regular.otf",
+    "medium": f"{_FONT_DIR}/LeagueSpartan-Medium.otf",
+    "semibold": f"{_FONT_DIR}/LeagueSpartan-SemiBold.otf",
+    "bold": f"{_FONT_DIR}/LeagueSpartan-Bold.otf",
+    "extrabold": f"{_FONT_DIR}/LeagueSpartan-ExtraBold.otf",
 }
 
 
@@ -71,6 +79,20 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, ma
                 current = word
         lines.append(current)
     return lines
+
+
+def _draw_tracked(
+    draw: ImageDraw.ImageDraw, xy: tuple[float, float], text: str, font: ImageFont.FreeTypeFont,
+    fill: str, tracking: float = 0,
+) -> float:
+    """Draw text letter-by-letter with extra spacing between characters —
+    Pillow has no built-in tracking/letter-spacing control. Returns the x
+    position after the last character."""
+    x, y = xy
+    for ch in text:
+        draw.text((x, y), ch, font=font, fill=fill)
+        x += draw.textlength(ch, font=font) + tracking
+    return x
 
 
 def _avatar_color(username: str) -> str:
@@ -116,12 +138,13 @@ def render_reddit_card(payload: ReportViewPayload) -> bytes | None:
 
 
 def _render(payload: ReportViewPayload) -> bytes:
-    f_sub = _font("bold", 12)
-    f_title = _font("bold", 18)
-    f_posttype = _font("regular", 13)
-    f_name = _font("medium", 13)
+    f_sub = _font("semibold", 12)
+    f_title = _font("extrabold", 20)
+    f_posttype = _font("medium", 13)
+    f_parent_name = _font("semibold", 13)
+    f_name = _font("bold", 14)
     f_meta = _font("regular", 12)
-    f_body = _font("regular", 15)
+    f_body = _font("medium", 16)
     f_pbody = _font("regular", 13)
     f_hint = _font("regular", 11)
 
@@ -156,8 +179,8 @@ def _render(payload: ReportViewPayload) -> bytes:
     body_lines = _wrap(measure, payload.snippet or "[no text]", f_body, content_w - comment_indent)
 
     y = _PAD
-    y += f_sub.size + 6  # subreddit line
-    y += len(title_lines) * (f_title.size + 6) + 4
+    y += f_sub.size + 8  # subreddit eyebrow
+    y += len(title_lines) * (f_title.size + 4) + 4
     if post_type_lines:
         y += len(post_type_lines) * (f_posttype.size + 4) + 6
     y += 1 + 14  # divider + gap
@@ -165,11 +188,11 @@ def _render(payload: ReportViewPayload) -> bytes:
     if has_parent:
         if payload.parent_is_nested:
             y += f_hint.size + 6
-        y += max(parent_avatar_d, f_name.size + 4) + 4
+        y += max(parent_avatar_d, f_parent_name.size + 4) + 4
         y += len(parent_lines) * (f_pbody.size + 5) + 14
 
     y += max(comment_avatar_d, f_name.size + 4) + 6
-    y += len(body_lines) * (f_body.size + 6)
+    y += len(body_lines) * (f_body.size + 7)
     y += _PAD
 
     height = int(y)
@@ -179,13 +202,13 @@ def _render(payload: ReportViewPayload) -> bytes:
 
     cy = _PAD
 
-    draw.ellipse([_PAD, cy + 1, _PAD + 10, cy + 11], fill=_SNOO)
-    draw.text((_PAD + 16, cy), f"r/{payload.subreddit}", font=f_sub, fill=_MUTED)
-    cy += f_sub.size + 6
+    draw.ellipse([_PAD, cy + 2, _PAD + 9, cy + 11], fill=_SNOO)
+    _draw_tracked(draw, (_PAD + 16, cy), f"R/{payload.subreddit}".upper(), f_sub, _MUTED, tracking=1.2)
+    cy += f_sub.size + 8
 
     for line in title_lines:
         draw.text((_PAD, cy), line, font=f_title, fill=_INK)
-        cy += f_title.size + 6
+        cy += f_title.size + 4
     cy += 4
 
     for line in post_type_lines:
@@ -204,12 +227,12 @@ def _render(payload: ReportViewPayload) -> bytes:
         row_top = cy
         _draw_avatar(draw, _PAD, row_top, parent_avatar_d, payload.parent_author or "?")
         draw.text(
-            (_PAD + parent_indent, row_top + parent_avatar_d / 2 - f_name.size / 2 - 2),
+            (_PAD + parent_indent, row_top + parent_avatar_d / 2 - f_parent_name.size / 2 - 2),
             f"u/{payload.parent_author}",
-            font=f_name,
+            font=f_parent_name,
             fill=_MUTED,
         )
-        cy += max(parent_avatar_d, f_name.size + 4) + 4
+        cy += max(parent_avatar_d, f_parent_name.size + 4) + 4
         bubble_top = cy - 2
         bubble_h = len(parent_lines) * (f_pbody.size + 5) + 10
         draw.rounded_rectangle(
@@ -230,7 +253,7 @@ def _render(payload: ReportViewPayload) -> bytes:
     age = _age(payload.created_utc)
     if age:
         draw.text(
-            (_PAD + comment_indent + name_w + 8, name_y + 1),
+            (_PAD + comment_indent + name_w + 8, name_y + 2),
             f"· {age}",
             font=f_meta,
             fill=_MUTED,
@@ -239,7 +262,7 @@ def _render(payload: ReportViewPayload) -> bytes:
 
     for line in body_lines:
         draw.text((_PAD + comment_indent, cy), line, font=f_body, fill=_INK)
-        cy += f_body.size + 6
+        cy += f_body.size + 7
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
