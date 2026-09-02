@@ -67,7 +67,6 @@ _SUBTLE = "#B0B3B5"
 _CONTEXT_BG = "#F6F7F8"
 _FLAG_BG = "#FCEAE8"
 _FLAG_ACCENT = "#B5312A"
-_REDDIT_ORANGE = "#FF4500"
 
 # Deliberately no pure red or green: those are the embed's own status colors
 # (removed / handled) elsewhere on the card, and a per-user avatar color
@@ -334,7 +333,6 @@ def _render_submission(payload: ReportViewPayload) -> bytes:
     f_title = _font("extrabold", 22)
     f_body = _font("medium", 16)
     f_stats = _font("regular", 13)
-    f_brand = _font("semibold", 13)
 
     measure_img = Image.new("RGB", (10, 10))
     measure = ImageDraw.Draw(measure_img)
@@ -376,8 +374,9 @@ def _render_submission(payload: ReportViewPayload) -> bytes:
     elif is_link:
         box_h += f_body.size + _s(4)
         box_h += _s(4)
-    box_h += _s(10)
-    box_h += max(f_stats.size, f_brand.size)
+    if payload.num_comments is not None:
+        box_h += _s(10)
+        box_h += f_stats.size
     box_h += box_pad
 
     y += box_h
@@ -419,12 +418,9 @@ def _render_submission(payload: ReportViewPayload) -> bytes:
         ty += f_body.size + _s(4)
         ty += _s(4)
 
-    ty += _s(10)
     if payload.num_comments is not None:
+        ty += _s(10)
         draw.text((text_x, ty), f"{payload.num_comments} comments", font=f_stats, fill=_MUTED)
-    brand = "Reddit"
-    brand_w = draw.textlength(brand, font=f_brand)
-    draw.text((_WIDTH - _PAD - box_pad - brand_w, ty), brand, font=f_brand, fill=_REDDIT_ORANGE)
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
