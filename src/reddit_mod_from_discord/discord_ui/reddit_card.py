@@ -6,10 +6,10 @@ comment that was actually reported. No vote arrows or action buttons —
 those would look interactive without being real, which is exactly what
 this is avoiding.
 
-Typeface is League Spartan: an uppercase, wide-tracked eyebrow for the
-subreddit line, an extrabold title, and one confident geometric family
-carrying the whole card rather than a generic system sans doing double
-duty.
+Typeface is Clarity City (VMware's open-source family, SIL OFL, bundled
+under assets/fonts/): an uppercase, wide-tracked eyebrow for the
+subreddit line, an extrabold title, and one confident family carrying
+the whole card rather than a generic system sans doing double duty.
 
 Everything is drawn at 2x (_SCALE): Discord's embed column is narrower
 than a 600px-logical card, so it always downsamples the image somewhat,
@@ -51,7 +51,6 @@ _RADIUS = _s(14)
 
 _BG = "#FFFFFF"
 _CARD_BORDER = "#EDEFF1"
-_DIVIDER = "#EDEFF1"
 _INK = "#1A1A1B"
 _MUTED = "#787C7E"
 _SUBTLE = "#B0B3B5"
@@ -64,19 +63,22 @@ _FLAG_ACCENT = "#B5312A"
 # landing on one by chance would look like a status signal it isn't.
 _AVATAR_COLORS = ["#0079D3", "#2B6CB0", "#7E53C1", "#6B46C1", "#FFB000", "#B5502F"]
 
-_FONT_DIR = "/usr/share/fonts/opentype/league-spartan"
+_FONT_DIR = "/app/assets/fonts/clarity-city"
 _FONT_PATHS = {
-    "regular": f"{_FONT_DIR}/LeagueSpartan-Regular.otf",
-    "medium": f"{_FONT_DIR}/LeagueSpartan-Medium.otf",
-    "semibold": f"{_FONT_DIR}/LeagueSpartan-SemiBold.otf",
-    "bold": f"{_FONT_DIR}/LeagueSpartan-Bold.otf",
-    "extrabold": f"{_FONT_DIR}/LeagueSpartan-ExtraBold.otf",
+    "regular": f"{_FONT_DIR}/ClarityCity-Regular.ttf",
+    "medium": f"{_FONT_DIR}/ClarityCity-Medium.ttf",
+    "semibold": f"{_FONT_DIR}/ClarityCity-SemiBold.ttf",
+    "bold": f"{_FONT_DIR}/ClarityCity-Bold.ttf",
+    "extrabold": f"{_FONT_DIR}/ClarityCity-ExtraBold.ttf",
 }
 
 
 @functools.lru_cache(maxsize=24)
 def _font(weight: str, size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(_FONT_PATHS[weight], _s(size))
+
+
+_MAX_LINE_CHARS = 38  # cap the reading measure, not just the pixel width
 
 
 def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, max_width: int) -> list[str]:
@@ -89,7 +91,9 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, ma
         current = words[0]
         for word in words[1:]:
             trial = f"{current} {word}"
-            if draw.textlength(trial, font=font) <= max_width:
+            fits_width = draw.textlength(trial, font=font) <= max_width
+            fits_chars = len(trial) <= _MAX_LINE_CHARS
+            if fits_width and fits_chars:
                 current = trial
             else:
                 lines.append(current)
@@ -113,7 +117,7 @@ def _wrap_capped(
         return lines
     kept = lines[:max_lines]
     last = kept[-1]
-    while last and draw.textlength(last + "...", font=font) > max_width:
+    while last and (draw.textlength(last + "...", font=font) > max_width or len(last) + 3 > _MAX_LINE_CHARS):
         last = last[:-1].rstrip()
     kept[-1] = f"{last}..." if last else "..."
     return kept
@@ -183,16 +187,16 @@ def render_reddit_card(payload: ReportViewPayload) -> bytes | None:
 
 
 def _render(payload: ReportViewPayload) -> bytes:
-    f_sub = _font("semibold", 12)
-    f_title = _font("extrabold", 20)
-    f_posttype = _font("medium", 13)
-    f_parent_name = _font("semibold", 13)
-    f_name = _font("bold", 14)
-    f_meta = _font("regular", 12)
-    f_body = _font("medium", 16)
-    f_pbody = _font("regular", 13)
-    f_hint = _font("regular", 11)
-    f_flag = _font("bold", 11)
+    f_sub = _font("semibold", 13)
+    f_title = _font("extrabold", 22)
+    f_posttype = _font("medium", 15)
+    f_parent_name = _font("semibold", 14)
+    f_name = _font("bold", 16)
+    f_meta = _font("regular", 13)
+    f_body = _font("medium", 18)
+    f_pbody = _font("regular", 15)
+    f_hint = _font("regular", 12)
+    f_flag = _font("bold", 12)
 
     measure_img = Image.new("RGB", (10, 10))
     measure = ImageDraw.Draw(measure_img)
@@ -229,7 +233,7 @@ def _render(payload: ReportViewPayload) -> bytes:
     comment_indent = comment_avatar_d + _s(12)
     box_pad = _s(14)
     body_lines = _wrap(measure, payload.snippet or "[no text]", f_body, content_w - comment_indent - 2 * box_pad)
-    comment_row_h = max(comment_avatar_d, f_name.size + _s(4)) + _s(6)
+    comment_row_h = max(comment_avatar_d, f_name.size + _s(4)) + _s(2)
     comment_body_h = len(body_lines) * (f_body.size + _s(7))
     flag_box_h = box_pad * 2 + comment_row_h + comment_body_h
 
@@ -238,12 +242,12 @@ def _render(payload: ReportViewPayload) -> bytes:
     y += len(title_lines) * (f_title.size + _s(4)) + _s(4)
     if post_type_lines:
         y += len(post_type_lines) * (f_posttype.size + _s(4)) + _s(6)
-    y += _SCALE + _s(14)  # divider + gap
+    y += _s(20)  # gap before context/reported section, no rule line
 
     if has_parent:
         if payload.parent_is_nested:
             y += f_hint.size + _s(6)
-        y += max(parent_avatar_d, f_parent_name.size + _s(4)) + _s(4)
+        y += max(parent_avatar_d, f_parent_name.size + _s(4)) + _s(2)
         y += len(parent_lines) * (f_pbody.size + _s(5)) + _s(14)
 
     y += f_flag.size + _s(6)  # "REPORTED" label
@@ -271,8 +275,7 @@ def _render(payload: ReportViewPayload) -> bytes:
     if post_type_lines:
         cy += _s(2)
 
-    draw.line([(_PAD, cy), (_WIDTH - _PAD, cy)], fill=_DIVIDER, width=_SCALE)
-    cy += _s(14)
+    cy += _s(20)
 
     if has_parent:
         if payload.parent_is_nested:
@@ -286,7 +289,7 @@ def _render(payload: ReportViewPayload) -> bytes:
             font=f_parent_name,
             fill=_MUTED,
         )
-        cy += max(parent_avatar_d, f_parent_name.size + _s(4)) + _s(4)
+        cy += max(parent_avatar_d, f_parent_name.size + _s(4)) + _s(2)
         bubble_top = cy - _s(2)
         bubble_h = len(parent_lines) * (f_pbody.size + _s(5)) + _s(10)
         draw.rounded_rectangle(
