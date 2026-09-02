@@ -57,6 +57,8 @@ _INK = "#1A1A1B"
 _MUTED = "#787C7E"
 _SUBTLE = "#B0B3B5"
 _CONTEXT_BG = "#F6F7F8"
+_FLAG_BG = "#FCEAE8"
+_FLAG_ACCENT = "#B5312A"
 
 # Deliberately no pure red or green: those are the embed's own status colors
 # (removed / handled) elsewhere on the card, and a per-user avatar color
@@ -191,6 +193,7 @@ def _render(payload: ReportViewPayload) -> bytes:
     f_body = _font("medium", 16)
     f_pbody = _font("regular", 13)
     f_hint = _font("regular", 11)
+    f_flag = _font("bold", 11)
 
     measure_img = Image.new("RGB", (10, 10))
     measure = ImageDraw.Draw(measure_img)
@@ -218,9 +221,19 @@ def _render(payload: ReportViewPayload) -> bytes:
         parent_body = (payload.parent_body or "").strip() or "[no text]"
         parent_lines = _wrap_capped(measure, parent_body, f_pbody, content_w - parent_indent - _s(16), max_lines=3)
 
+    # The reported comment gets its own tinted, bordered box - Cas (a mod,
+    # and a working typographer/designer) flagged that without it, nothing
+    # on the card actually marked which part was the reported content
+    # versus surrounding context; position and a thin divider weren't
+    # enough to read as "this is the flagged thing" at a glance, especially
+    # at Discord's shrunk-down preview size.
     comment_avatar_d = _s(34)
     comment_indent = comment_avatar_d + _s(12)
-    body_lines = _wrap(measure, payload.snippet or "[no text]", f_body, content_w - comment_indent)
+    box_pad = _s(14)
+    body_lines = _wrap(measure, payload.snippet or "[no text]", f_body, content_w - comment_indent - 2 * box_pad)
+    comment_row_h = max(comment_avatar_d, f_name.size + _s(4)) + _s(6)
+    comment_body_h = len(body_lines) * (f_body.size + _s(7))
+    flag_box_h = box_pad * 2 + comment_row_h + comment_body_h
 
     y = _PAD
     y += f_sub.size + _s(8)  # subreddit eyebrow
@@ -235,8 +248,8 @@ def _render(payload: ReportViewPayload) -> bytes:
         y += max(parent_avatar_d, f_parent_name.size + _s(4)) + _s(4)
         y += len(parent_lines) * (f_pbody.size + _s(5)) + _s(14)
 
-    y += max(comment_avatar_d, f_name.size + _s(4)) + _s(6)
-    y += len(body_lines) * (f_body.size + _s(7))
+    y += f_flag.size + _s(6)  # "REPORTED" label
+    y += flag_box_h
     y += _PAD
 
     height = int(y)
@@ -288,24 +301,36 @@ def _render(payload: ReportViewPayload) -> bytes:
             ty += f_pbody.size + _s(5)
         cy = bubble_top + bubble_h + _s(14)
 
-    row_top = cy
-    _draw_avatar(draw, _PAD, row_top, comment_avatar_d, payload.author or "?")
+    _draw_tracked(draw, (_PAD, cy), "REPORTED", f_flag, _FLAG_ACCENT, tracking=1.2)
+    cy += f_flag.size + _s(6)
+
+    box_top = cy
+    draw.rounded_rectangle(
+        [_PAD, box_top, _WIDTH - _PAD, box_top + flag_box_h],
+        radius=_s(10), fill=_FLAG_BG,
+    )
+
+    row_top = box_top + box_pad
+    avatar_x = _PAD + box_pad
+    text_x = avatar_x + comment_indent
+    _draw_avatar(draw, avatar_x, row_top, comment_avatar_d, payload.author or "?")
     name_y = row_top + comment_avatar_d / 2 - f_name.size / 2 - _s(2)
-    draw.text((_PAD + comment_indent, name_y), f"u/{payload.author or '[deleted]'}", font=f_name, fill=_INK)
+    draw.text((text_x, name_y), f"u/{payload.author or '[deleted]'}", font=f_name, fill=_INK)
     name_w = draw.textlength(f"u/{payload.author or '[deleted]'}", font=f_name)
     age = _age(payload.created_utc)
     if age:
         draw.text(
-            (_PAD + comment_indent + name_w + _s(8), name_y + _s(2)),
+            (text_x + name_w + _s(8), name_y + _s(2)),
             f"· {age}",
             font=f_meta,
             fill=_MUTED,
         )
-    cy += max(comment_avatar_d, f_name.size + _s(4)) + _s(6)
-
+    ty = row_top + comment_row_h
     for line in body_lines:
-        draw.text((_PAD + comment_indent, cy), line, font=f_body, fill=_INK)
-        cy += f_body.size + _s(7)
+        draw.text((text_x, ty), line, font=f_body, fill=_INK)
+        ty += f_body.size + _s(7)
+
+    cy = box_top + flag_box_h
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
