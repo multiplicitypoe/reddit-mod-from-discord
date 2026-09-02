@@ -14,7 +14,7 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-        ca-certificates tzdata fonts-league-spartan \
+        ca-certificates tzdata \
         libjpeg62-turbo libtiff6 libopenjp2-7 libwebp7 liblcms2-2 libfreetype6 libxcb1; \
     rm -rf /var/lib/apt/lists/*
 
@@ -29,6 +29,7 @@ RUN set -eux; \
     pip install --no-cache-dir --only-binary=:all: $extra -r /app/requirements.txt
 
 COPY src /app/src
+COPY assets /app/assets
 
 RUN addgroup --system app \
     && adduser --system --ingroup app app \
