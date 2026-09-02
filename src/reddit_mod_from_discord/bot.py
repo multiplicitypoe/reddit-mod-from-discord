@@ -289,9 +289,9 @@ class RedditModBot(discord.Client):
             allowed_role_ids=runtime.allowed_role_ids,
             demo_mode=True,
         )
-        embed, attachment = build_report_message(payload)
+        embeds, attachment = build_report_message(payload)
         send_kwargs: dict[str, object] = {
-            "embed": embed,
+            "embeds": embeds,
             "view": view,
             "allowed_mentions": discord.AllowedMentions.none(),
             "silent": runtime.settings.discord_silent_notifications,
@@ -663,9 +663,9 @@ class RedditModBot(discord.Client):
                     demo_mode=self.settings.demo_mode,
                 )
 
-                embed, attachment = build_report_message(payload)
+                embeds, attachment = build_report_message(payload)
                 send_kwargs: dict[str, object] = {
-                    "embed": embed,
+                    "embeds": embeds,
                     "view": view,
                     "allowed_mentions": discord.AllowedMentions.none(),
                     "silent": runtime.settings.discord_silent_notifications,
@@ -1027,8 +1027,8 @@ class RedditModBot(discord.Client):
             demo_mode=self.settings.demo_mode,
         )
         try:
-            embed, attachment = build_report_message(payload)
-            edit_kwargs: dict[str, object] = {"embed": embed, "view": view}
+            embeds, attachment = build_report_message(payload)
+            edit_kwargs: dict[str, object] = {"embeds": embeds, "view": view}
             if attachment is not None:
                 edit_kwargs["attachments"] = [attachment]
             await message.edit(**edit_kwargs)

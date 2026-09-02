@@ -522,20 +522,31 @@ def build_report_attachment(payload: ReportViewPayload) -> discord.File | None:
     return discord.File(io.BytesIO(png_bytes), filename=filename, description=alt_text)
 
 
-def build_report_message(payload: ReportViewPayload) -> tuple[discord.Embed, discord.File | None]:
-    """The embed plus its optional Reddit-card attachment, built together so
-    the embed always correctly reflects whether a card is actually coming.
+def build_report_message(payload: ReportViewPayload) -> tuple[list[discord.Embed], discord.File | None]:
+    """The embed(s) plus the optional Reddit-card attachment, built together
+    so the embed always correctly reflects whether a card is actually
+    coming.
 
-    The card is deliberately NOT wired into the embed's own image slot.
-    Discord always renders an embed's image after its description and
-    fields, with no way to move it earlier - so referencing it there would
-    put the actual reported content last, under a screen of metadata. A
-    plain attachment that no embed references renders above every embed in
-    the message instead, which is the order that actually matters here:
-    see the content first, read the status/reasons/buttons after."""
+    Discord always renders a single embed's own image after its
+    description and fields, with no way to move it earlier - so there is
+    no way to put the card "inside the embed, at the top" with just one
+    embed. The closest the platform allows: two embeds in the same
+    message, stacked with the same accent color and no gap in the color
+    bar. The first carries only the title and the image - nothing renders
+    before an image within an embed that has no description or fields, so
+    it's effectively "at the top" of that card. The second carries
+    Status/fields/footer below it. Without a card, this collapses back to
+    the single embed it always was."""
     attachment = build_report_attachment(payload)
     embed = build_report_embed(payload, has_card=attachment is not None)
-    return embed, attachment
+    if attachment is None:
+        return [embed], None
+
+    hero = discord.Embed(color=embed.color, title=embed.title, url=embed.url)
+    hero.set_image(url=f"attachment://{attachment.filename}")
+    embed.title = None
+    embed.url = None
+    return [hero, embed], attachment
 
 
 @dataclass(frozen=True)
@@ -1485,8 +1496,8 @@ class ReportView(discord.ui.View):
     async def _apply_message_update(self, interaction: discord.Interaction, ref: MessageRef) -> None:
         msg = await self._fetch_message_for_ref(interaction, ref)
         if msg is not None:
-            embed, attachment = build_report_message(self.payload)
-            edit_kwargs: dict[str, object] = {"embed": embed, "view": self}
+            embeds, attachment = build_report_message(self.payload)
+            edit_kwargs: dict[str, object] = {"embeds": embeds, "view": self}
             if attachment is not None:
                 edit_kwargs["attachments"] = [attachment]
             try:
