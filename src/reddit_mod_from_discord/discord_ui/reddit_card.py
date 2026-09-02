@@ -12,6 +12,12 @@ wide-tracked eyebrow for the subreddit line, an extrabold title, and one
 confident family carrying the whole card rather than a generic system
 sans doing double duty.
 
+Everything is drawn at 2x (_SCALE): Discord's embed column is narrower
+than a 600px-logical card, so it always downsamples the image somewhat,
+and text drawn at native size came out visibly soft after that resize.
+Rendering at double resolution and letting Discord scale it down is the
+same trick as a retina/@2x image asset.
+
 Text-only fallback stays in report_view.py if this fails for any reason
 (missing fonts, bad input); nothing here should ever be allowed to break
 report delivery, so every public entry point catches broadly and returns
@@ -32,9 +38,16 @@ from reddit_mod_from_discord.models import ReportViewPayload
 
 logger = logging.getLogger("reddit_mod_from_discord")
 
-_WIDTH = 600
-_PAD = 24
-_RADIUS = 14
+_SCALE = 2
+
+
+def _s(px: float) -> int:
+    return round(px * _SCALE)
+
+
+_WIDTH = _s(600)
+_PAD = _s(24)
+_RADIUS = _s(14)
 
 _BG = "#FFFFFF"
 _CARD_BORDER = "#EDEFF1"
@@ -59,7 +72,7 @@ _FONT_PATHS = {
 
 @functools.lru_cache(maxsize=24)
 def _font(weight: str, size: int) -> ImageFont.FreeTypeFont:
-    return ImageFont.truetype(_FONT_PATHS[weight], size)
+    return ImageFont.truetype(_FONT_PATHS[weight], _s(size))
 
 
 def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, max_width: int) -> list[str]:
@@ -86,12 +99,13 @@ def _draw_tracked(
     fill: str, tracking: float = 0,
 ) -> float:
     """Draw text letter-by-letter with extra spacing between characters —
-    Pillow has no built-in tracking/letter-spacing control. Returns the x
-    position after the last character."""
+    Pillow has no built-in tracking/letter-spacing control. `tracking` is in
+    logical (pre-scale) px. Returns the x position after the last character."""
     x, y = xy
+    tracking_px = _s(tracking)
     for ch in text:
         draw.text((x, y), ch, font=font, fill=fill)
-        x += draw.textlength(ch, font=font) + tracking
+        x += draw.textlength(ch, font=font) + tracking_px
     return x
 
 
@@ -100,9 +114,11 @@ def _avatar_color(username: str) -> str:
 
 
 def _draw_avatar(draw: ImageDraw.ImageDraw, x: int, y: int, d: int, username: str) -> None:
+    """`d` is already in scaled px (a computed layout size, not a logical
+    constant), so it's used as-is rather than passed through _s again."""
     draw.ellipse([x, y, x + d, y + d], fill=_avatar_color(username))
     initial = (username or "?")[:1].upper()
-    font = _font("bold", max(10, d // 2))
+    font = ImageFont.truetype(_FONT_PATHS["bold"], max(_s(10), d // 2))
     bbox = draw.textbbox((0, 0), initial, font=font)
     w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
     draw.text((x + d / 2 - w / 2 - bbox[0], y + d / 2 - h / 2 - bbox[1]), initial, font=font, fill="#FFFFFF")
@@ -167,102 +183,104 @@ def _render(payload: ReportViewPayload) -> bytes:
         post_type_lines = [f"Link post · {domain}" if domain else "Link post"]
 
     has_parent = bool(payload.parent_author)
-    parent_avatar_d = 22
-    parent_indent = parent_avatar_d + 10
+    parent_avatar_d = _s(22)
+    parent_indent = parent_avatar_d + _s(10)
     parent_lines: list[str] = []
     if has_parent:
         parent_body = (payload.parent_body or "").strip() or "[no text]"
-        parent_lines = _wrap(measure, parent_body, f_pbody, content_w - parent_indent - 16)
+        parent_lines = _wrap(measure, parent_body, f_pbody, content_w - parent_indent - _s(16))
 
-    comment_avatar_d = 34
-    comment_indent = comment_avatar_d + 12
+    comment_avatar_d = _s(34)
+    comment_indent = comment_avatar_d + _s(12)
     body_lines = _wrap(measure, payload.snippet or "[no text]", f_body, content_w - comment_indent)
 
     y = _PAD
-    y += f_sub.size + 8  # subreddit eyebrow
-    y += len(title_lines) * (f_title.size + 4) + 4
+    y += f_sub.size + _s(8)  # subreddit eyebrow
+    y += len(title_lines) * (f_title.size + _s(4)) + _s(4)
     if post_type_lines:
-        y += len(post_type_lines) * (f_posttype.size + 4) + 6
-    y += 1 + 14  # divider + gap
+        y += len(post_type_lines) * (f_posttype.size + _s(4)) + _s(6)
+    y += _SCALE + _s(14)  # divider + gap
 
     if has_parent:
         if payload.parent_is_nested:
-            y += f_hint.size + 6
-        y += max(parent_avatar_d, f_parent_name.size + 4) + 4
-        y += len(parent_lines) * (f_pbody.size + 5) + 14
+            y += f_hint.size + _s(6)
+        y += max(parent_avatar_d, f_parent_name.size + _s(4)) + _s(4)
+        y += len(parent_lines) * (f_pbody.size + _s(5)) + _s(14)
 
-    y += max(comment_avatar_d, f_name.size + 4) + 6
-    y += len(body_lines) * (f_body.size + 7)
+    y += max(comment_avatar_d, f_name.size + _s(4)) + _s(6)
+    y += len(body_lines) * (f_body.size + _s(7))
     y += _PAD
 
     height = int(y)
     img = Image.new("RGB", (_WIDTH, height), _BG)
     draw = ImageDraw.Draw(img)
-    draw.rounded_rectangle([0, 0, _WIDTH - 1, height - 1], radius=_RADIUS, outline=_CARD_BORDER, width=1)
+    draw.rounded_rectangle([0, 0, _WIDTH - 1, height - 1], radius=_RADIUS, outline=_CARD_BORDER, width=_SCALE)
 
     cy = _PAD
 
-    draw.ellipse([_PAD, cy + 2, _PAD + 9, cy + 11], fill=_SNOO)
-    _draw_tracked(draw, (_PAD + 16, cy), f"R/{payload.subreddit}".upper(), f_sub, _MUTED, tracking=1.2)
-    cy += f_sub.size + 8
+    snoo_d = _s(9)
+    snoo_off = _s(2)
+    draw.ellipse([_PAD, cy + snoo_off, _PAD + snoo_d, cy + snoo_off + snoo_d], fill=_SNOO)
+    _draw_tracked(draw, (_PAD + _s(16), cy), f"R/{payload.subreddit}".upper(), f_sub, _MUTED, tracking=1.2)
+    cy += f_sub.size + _s(8)
 
     for line in title_lines:
         draw.text((_PAD, cy), line, font=f_title, fill=_INK)
-        cy += f_title.size + 4
-    cy += 4
+        cy += f_title.size + _s(4)
+    cy += _s(4)
 
     for line in post_type_lines:
         draw.text((_PAD, cy), line, font=f_posttype, fill=_MUTED)
-        cy += f_posttype.size + 4
+        cy += f_posttype.size + _s(4)
     if post_type_lines:
-        cy += 2
+        cy += _s(2)
 
-    draw.line([(_PAD, cy), (_WIDTH - _PAD, cy)], fill=_DIVIDER, width=1)
-    cy += 14
+    draw.line([(_PAD, cy), (_WIDTH - _PAD, cy)], fill=_DIVIDER, width=_SCALE)
+    cy += _s(14)
 
     if has_parent:
         if payload.parent_is_nested:
             draw.text((_PAD, cy), "... replying further up — see full thread", font=f_hint, fill=_SUBTLE)
-            cy += f_hint.size + 6
+            cy += f_hint.size + _s(6)
         row_top = cy
         _draw_avatar(draw, _PAD, row_top, parent_avatar_d, payload.parent_author or "?")
         draw.text(
-            (_PAD + parent_indent, row_top + parent_avatar_d / 2 - f_parent_name.size / 2 - 2),
+            (_PAD + parent_indent, row_top + parent_avatar_d / 2 - f_parent_name.size / 2 - _s(2)),
             f"u/{payload.parent_author}",
             font=f_parent_name,
             fill=_MUTED,
         )
-        cy += max(parent_avatar_d, f_parent_name.size + 4) + 4
-        bubble_top = cy - 2
-        bubble_h = len(parent_lines) * (f_pbody.size + 5) + 10
+        cy += max(parent_avatar_d, f_parent_name.size + _s(4)) + _s(4)
+        bubble_top = cy - _s(2)
+        bubble_h = len(parent_lines) * (f_pbody.size + _s(5)) + _s(10)
         draw.rounded_rectangle(
             [_PAD + parent_indent, bubble_top, _WIDTH - _PAD, bubble_top + bubble_h],
-            radius=8, fill=_CONTEXT_BG,
+            radius=_s(8), fill=_CONTEXT_BG,
         )
-        ty = bubble_top + 6
+        ty = bubble_top + _s(6)
         for line in parent_lines:
-            draw.text((_PAD + parent_indent + 10, ty), line, font=f_pbody, fill=_MUTED)
-            ty += f_pbody.size + 5
-        cy = bubble_top + bubble_h + 14
+            draw.text((_PAD + parent_indent + _s(10), ty), line, font=f_pbody, fill=_MUTED)
+            ty += f_pbody.size + _s(5)
+        cy = bubble_top + bubble_h + _s(14)
 
     row_top = cy
     _draw_avatar(draw, _PAD, row_top, comment_avatar_d, payload.author or "?")
-    name_y = row_top + comment_avatar_d / 2 - f_name.size / 2 - 2
+    name_y = row_top + comment_avatar_d / 2 - f_name.size / 2 - _s(2)
     draw.text((_PAD + comment_indent, name_y), f"u/{payload.author or '[deleted]'}", font=f_name, fill=_INK)
     name_w = draw.textlength(f"u/{payload.author or '[deleted]'}", font=f_name)
     age = _age(payload.created_utc)
     if age:
         draw.text(
-            (_PAD + comment_indent + name_w + 8, name_y + 2),
+            (_PAD + comment_indent + name_w + _s(8), name_y + _s(2)),
             f"· {age}",
             font=f_meta,
             fill=_MUTED,
         )
-    cy += max(comment_avatar_d, f_name.size + 4) + 6
+    cy += max(comment_avatar_d, f_name.size + _s(4)) + _s(6)
 
     for line in body_lines:
         draw.text((_PAD + comment_indent, cy), line, font=f_body, fill=_INK)
-        cy += f_body.size + 7
+        cy += f_body.size + _s(7)
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
