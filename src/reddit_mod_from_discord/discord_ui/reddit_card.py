@@ -57,9 +57,11 @@ _INK = "#1A1A1B"
 _MUTED = "#787C7E"
 _SUBTLE = "#B0B3B5"
 _CONTEXT_BG = "#F6F7F8"
-_SNOO = "#FF4500"
 
-_AVATAR_COLORS = ["#FF4500", "#0079D3", "#46D160", "#FFB000", "#7E53C1", "#019A75", "#EA0027"]
+# Deliberately no pure red or green: those are the embed's own status colors
+# (removed / handled) elsewhere on the card, and a per-user avatar color
+# landing on one by chance would look like a status signal it isn't.
+_AVATAR_COLORS = ["#0079D3", "#2B6CB0", "#7E53C1", "#6B46C1", "#FFB000", "#B5502F"]
 
 _FONT_DIR = "/usr/share/fonts/opentype/league-spartan"
 _FONT_PATHS = {
@@ -244,10 +246,7 @@ def _render(payload: ReportViewPayload) -> bytes:
 
     cy = _PAD
 
-    snoo_d = _s(9)
-    snoo_off = _s(2)
-    draw.ellipse([_PAD, cy + snoo_off, _PAD + snoo_d, cy + snoo_off + snoo_d], fill=_SNOO)
-    _draw_tracked(draw, (_PAD + _s(16), cy), f"R/{payload.subreddit}".upper(), f_sub, _MUTED, tracking=1.2)
+    _draw_tracked(draw, (_PAD, cy), f"R/{payload.subreddit}".upper(), f_sub, _MUTED, tracking=1.2)
     cy += f_sub.size + _s(8)
 
     for line in title_lines:
