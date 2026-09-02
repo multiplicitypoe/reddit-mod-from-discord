@@ -408,7 +408,12 @@ def build_report_embed(payload: ReportViewPayload, *, has_card: bool = False) ->
     # next thing worth knowing is *why* (Report reasons), not the current
     # state - that's a wrap-up, not a headline. It's added as the last
     # field, below.
-    if payload.kind == "submission":
+    if has_card:
+        # A rendered Reddit-style card carries the title and body (and for
+        # a comment, its context) directly, so there's nothing left for the
+        # description to add beyond an optional link line.
+        description_lines = [link_line] if link_line else []
+    elif payload.kind == "submission":
         description_lines = [f"**Title:** {_truncate(summary, 300)}"]
         if payload.num_comments is not None:
             description_lines.append(f"**Comments:** {payload.num_comments}")
@@ -416,11 +421,6 @@ def build_report_embed(payload: ReportViewPayload, *, has_card: bool = False) ->
             description_lines.append(link_line)
         if snippet_text:
             description_lines.append(f"**Text:** {snippet_text}")
-    elif has_card:
-        # A rendered Reddit-style card carries the comment, its context, and
-        # the post title, so there's nothing left for the description to add
-        # beyond an optional link line.
-        description_lines = [link_line] if link_line else []
     else:
         # Fallback for when the card couldn't be rendered (e.g. fonts
         # unavailable): same text-only layout as before the image existed.
@@ -487,36 +487,47 @@ def build_report_embed(payload: ReportViewPayload, *, has_card: bool = False) ->
 
 
 def build_report_attachment(payload: ReportViewPayload) -> discord.File | None:
-    """The rendered Reddit-style card for a comment report, as a file with
-    real accessible alt text. Returns None for submissions (nothing to
-    render beyond the title, which the embed already shows) and whenever
-    rendering fails for any reason — callers fall back to the text-only
-    embed in that case, so a bad render never blocks report delivery."""
-    if payload.kind != "comment":
-        return None
+    """The rendered Reddit-style card, as a file with real accessible alt
+    text. Returns None whenever rendering fails for any reason — callers
+    fall back to the text-only embed in that case, so a bad render never
+    blocks report delivery."""
     png_bytes = render_reddit_card(payload)
     if png_bytes is None:
         return None
 
-    alt_parts = [f"Comment by u/{payload.author or '[deleted]'}"]
-    if payload.parent_author:
-        alt_parts.append(
-            f", replying to u/{payload.parent_author}: "
-            f"“{_truncate(payload.parent_body or '', 200)}”"
-        )
-    alt_parts.append(f", on “{_truncate(payload.title, 200)}” in r/{payload.subreddit}")
-    if payload.post_is_self is True:
-        if payload.post_selftext:
-            alt_parts.append(f" (text post: “{_truncate(payload.post_selftext, 150)}”)")
+    if payload.kind == "submission":
+        alt_parts = [f"Reported post “{_truncate(payload.title, 200)}” in r/{payload.subreddit}"]
+        snippet = (payload.snippet or "").strip()
+        if snippet:
+            alt_parts.append(f": “{_truncate(snippet, 400)}”")
         else:
-            alt_parts.append(" (text post, no body)")
-    elif payload.post_is_self is False:
-        domain = None
-        if payload.link_url:
-            netloc = urlparse(payload.link_url).netloc
-            domain = netloc[4:] if netloc.startswith("www.") else netloc or None
-        alt_parts.append(f" (link post to {domain})" if domain else " (link post)")
-    alt_parts.append(f": “{_truncate(payload.snippet, 400)}”")
+            domain = None
+            if payload.link_url:
+                netloc = urlparse(payload.link_url).netloc
+                domain = netloc[4:] if netloc.startswith("www.") else netloc or None
+            alt_parts.append(f" (link post to {domain})" if domain else " (link post)")
+        if payload.num_comments is not None:
+            alt_parts.append(f", {payload.num_comments} comments")
+    else:
+        alt_parts = [f"Comment by u/{payload.author or '[deleted]'}"]
+        if payload.parent_author:
+            alt_parts.append(
+                f", replying to u/{payload.parent_author}: "
+                f"“{_truncate(payload.parent_body or '', 200)}”"
+            )
+        alt_parts.append(f", on “{_truncate(payload.title, 200)}” in r/{payload.subreddit}")
+        if payload.post_is_self is True:
+            if payload.post_selftext:
+                alt_parts.append(f" (text post: “{_truncate(payload.post_selftext, 150)}”)")
+            else:
+                alt_parts.append(" (text post, no body)")
+        elif payload.post_is_self is False:
+            domain = None
+            if payload.link_url:
+                netloc = urlparse(payload.link_url).netloc
+                domain = netloc[4:] if netloc.startswith("www.") else netloc or None
+            alt_parts.append(f" (link post to {domain})" if domain else " (link post)")
+        alt_parts.append(f": “{_truncate(payload.snippet, 400)}”")
     alt_text = _truncate("".join(alt_parts), 1024)
 
     safe_id = re.sub(r"[^A-Za-z0-9_-]", "", payload.fullname) or "report"
