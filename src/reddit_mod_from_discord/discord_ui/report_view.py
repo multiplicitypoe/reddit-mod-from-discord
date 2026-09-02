@@ -8,6 +8,7 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 import discord
@@ -501,10 +502,19 @@ def build_report_attachment(payload: ReportViewPayload) -> discord.File | None:
             f", replying to u/{payload.parent_author}: "
             f"“{_truncate(payload.parent_body or '', 200)}”"
         )
-    alt_parts.append(
-        f", on “{_truncate(payload.title, 200)}” in r/{payload.subreddit}: "
-        f"“{_truncate(payload.snippet, 400)}”"
-    )
+    alt_parts.append(f", on “{_truncate(payload.title, 200)}” in r/{payload.subreddit}")
+    if payload.post_is_self is True:
+        if payload.post_selftext:
+            alt_parts.append(f" (text post: “{_truncate(payload.post_selftext, 150)}”)")
+        else:
+            alt_parts.append(" (text post, no body)")
+    elif payload.post_is_self is False:
+        domain = None
+        if payload.link_url:
+            netloc = urlparse(payload.link_url).netloc
+            domain = netloc[4:] if netloc.startswith("www.") else netloc or None
+        alt_parts.append(f" (link post to {domain})" if domain else " (link post)")
+    alt_parts.append(f": “{_truncate(payload.snippet, 400)}”")
     alt_text = _truncate("".join(alt_parts), 1024)
 
     safe_id = re.sub(r"[^A-Za-z0-9_-]", "", payload.fullname) or "report"
