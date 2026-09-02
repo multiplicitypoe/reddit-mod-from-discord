@@ -1,10 +1,20 @@
-"""Render a reported comment as a PNG styled like modern Reddit's comment
-card: full post title, what kind of post it's under (text body preview or
-link domain — so a reviewer never has to guess whether there's more to the
-post than the title), the comment being replied to (if any), then the
-comment that was actually reported. No vote arrows or action buttons —
-those would look interactive without being real, which is exactly what
-this is avoiding.
+"""Render a reported comment or reported post as a PNG.
+
+A reported comment renders as a Reddit-style comment card: full post
+title, what kind of post it's under (text body preview or link domain —
+so a reviewer never has to guess whether there's more to the post than
+the title), the comment being replied to (if any), then the comment that
+was actually reported, in its own tinted box labeled REPORTED COMMENT.
+
+A reported post is a different shape, deliberately not the comment
+layout with a name/avatar bolted on - a post isn't "posted by X: text"
+the way a comment reply reads, and reusing that treatment made the two
+report types look confusingly similar. Instead it mirrors Discord's own
+native Reddit-link embed: subreddit line, title, body preview or link
+domain, a small stats row - all inside one box labeled REPORTED POST.
+
+No vote arrows or action buttons on either - those would look
+interactive without being real, which is exactly what this is avoiding.
 
 Typeface is Clarity City (VMware's open-source family, SIL OFL, bundled
 under assets/fonts/): an uppercase, wide-tracked eyebrow for the
@@ -57,6 +67,7 @@ _SUBTLE = "#B0B3B5"
 _CONTEXT_BG = "#F6F7F8"
 _FLAG_BG = "#FCEAE8"
 _FLAG_ACCENT = "#B5312A"
+_REDDIT_ORANGE = "#FF4500"
 
 # Deliberately no pure red or green: those are the embed's own status colors
 # (removed / handled) elsewhere on the card, and a per-user avatar color
@@ -154,13 +165,15 @@ def _domain(url: str | None) -> str | None:
 
 def render_reddit_card(payload: ReportViewPayload) -> bytes | None:
     try:
-        return _render(payload)
+        if payload.kind == "submission":
+            return _render_submission(payload)
+        return _render_comment(payload)
     except Exception:
         logger.exception("Failed to render Reddit card for %s", payload.fullname)
         return None
 
 
-def _render(payload: ReportViewPayload) -> bytes:
+def _render_comment(payload: ReportViewPayload) -> bytes:
     f_sub = _font("semibold", 13)
     f_title = _font("extrabold", 22)
     f_posttype = _font("medium", 15)
@@ -224,7 +237,7 @@ def _render(payload: ReportViewPayload) -> bytes:
         y += max(parent_avatar_d, f_parent_name.size + _s(4)) + _s(2)
         y += len(parent_lines) * (f_pbody.size + _s(5)) + _s(14)
 
-    y += f_flag.size + _s(6)  # "REPORTED" label
+    y += f_flag.size + _s(6)  # "REPORTED COMMENT" label
     y += flag_box_h
     y += _PAD
 
@@ -276,7 +289,7 @@ def _render(payload: ReportViewPayload) -> bytes:
             ty += f_pbody.size + _s(5)
         cy = bubble_top + bubble_h + _s(14)
 
-    _draw_tracked(draw, (_PAD, cy), "REPORTED", f_flag, _FLAG_ACCENT, tracking=1.2)
+    _draw_tracked(draw, (_PAD, cy), "REPORTED COMMENT", f_flag, _FLAG_ACCENT, tracking=1.2)
     cy += f_flag.size + _s(6)
 
     box_top = cy
@@ -305,7 +318,113 @@ def _render(payload: ReportViewPayload) -> bytes:
         draw.text((text_x, ty), line, font=f_body, fill=_INK)
         ty += f_body.size + _s(7)
 
-    cy = box_top + flag_box_h
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _render_submission(payload: ReportViewPayload) -> bytes:
+    """A reported post is not "posted by X: text" the way a comment reply
+    reads - the whole post is the reported thing, so it gets Discord's own
+    native Reddit-link-embed shape instead of the comment card's avatar
+    treatment: subreddit line outside, then title / body-or-link / a small
+    stats row, all together inside one REPORTED POST box."""
+    f_sub = _font("semibold", 13)
+    f_flag = _font("bold", 12)
+    f_title = _font("extrabold", 22)
+    f_body = _font("medium", 16)
+    f_stats = _font("regular", 13)
+    f_brand = _font("semibold", 13)
+
+    measure_img = Image.new("RGB", (10, 10))
+    measure = ImageDraw.Draw(measure_img)
+
+    box_pad = _s(18)
+    inner_w = _WIDTH - 2 * _PAD - 2 * box_pad
+
+    title_lines = _wrap(measure, payload.title or "(no title)", f_title, inner_w)
+
+    # The post's own content: its text body if it's a self post, or the
+    # link and domain it points to if it's a link post. Comes straight off
+    # the payload's own fields - unlike a comment report, there's no parent
+    # post to fetch separately, this report *is* the post.
+    body_lines: list[str] = []
+    is_link = False
+    domain = None
+    snippet = (payload.snippet or "").strip()
+    if snippet:
+        body_lines = _wrap(measure, snippet, f_body, inner_w)
+    else:
+        is_link = bool(
+            payload.link_url
+            and payload.link_url != payload.permalink
+            and payload.link_url != payload.media_url
+        )
+        if is_link:
+            domain = _domain(payload.link_url)
+
+    y = _PAD
+    y += f_sub.size + _s(8)  # subreddit eyebrow
+    y += f_flag.size + _s(6)  # "REPORTED POST" label
+
+    box_h = box_pad
+    box_h += len(title_lines) * (f_title.size + _s(4))
+    box_h += _s(10)
+    if body_lines:
+        box_h += len(body_lines) * (f_body.size + _s(6))
+        box_h += _s(4)
+    elif is_link:
+        box_h += f_body.size + _s(4)
+        box_h += _s(4)
+    box_h += _s(10)
+    box_h += max(f_stats.size, f_brand.size)
+    box_h += box_pad
+
+    y += box_h
+    y += _PAD
+
+    height = int(y)
+    img = Image.new("RGB", (_WIDTH, height), _BG)
+    draw = ImageDraw.Draw(img)
+    draw.rounded_rectangle([0, 0, _WIDTH - 1, height - 1], radius=_RADIUS, outline=_CARD_BORDER, width=_SCALE)
+
+    cy = _PAD
+    _draw_tracked(draw, (_PAD, cy), f"R/{payload.subreddit}".upper(), f_sub, _MUTED, tracking=1.2)
+    cy += f_sub.size + _s(8)
+
+    _draw_tracked(draw, (_PAD, cy), "REPORTED POST", f_flag, _FLAG_ACCENT, tracking=1.2)
+    cy += f_flag.size + _s(6)
+
+    box_top = cy
+    draw.rounded_rectangle(
+        [_PAD, box_top, _WIDTH - _PAD, box_top + box_h],
+        radius=_s(10), fill=_FLAG_BG,
+    )
+
+    ty = box_top + box_pad
+    text_x = _PAD + box_pad
+    for line in title_lines:
+        draw.text((text_x, ty), line, font=f_title, fill=_INK)
+        ty += f_title.size + _s(4)
+    ty += _s(10)
+
+    if body_lines:
+        for line in body_lines:
+            draw.text((text_x, ty), line, font=f_body, fill=_INK)
+            ty += f_body.size + _s(6)
+        ty += _s(4)
+    elif is_link:
+        label = f"Link post · {domain}" if domain else "Link post"
+        draw.text((text_x, ty), label, font=f_body, fill=_MUTED)
+        ty += f_body.size + _s(4)
+        ty += _s(4)
+
+    ty += _s(10)
+    if payload.num_comments is not None:
+        draw.text((text_x, ty), f"{payload.num_comments} comments", font=f_stats, fill=_MUTED)
+    brand = "Reddit"
+    brand_w = draw.textlength(brand, font=f_brand)
+    draw.text((_WIDTH - _PAD - box_pad - brand_w, ty), brand, font=f_brand, fill=_REDDIT_ORANGE)
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
