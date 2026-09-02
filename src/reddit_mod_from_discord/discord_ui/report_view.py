@@ -404,9 +404,12 @@ def build_report_embed(payload: ReportViewPayload, *, has_card: bool = False) ->
     ):
         link_line = f"**Link:** {safe_link_url}"
 
+    # Status is deliberately not here: after reading what was reported, the
+    # next thing worth knowing is *why* (Report reasons), not the current
+    # state - that's a wrap-up, not a headline. It's added as the last
+    # field, below.
     if payload.kind == "submission":
         description_lines = [f"**Title:** {_truncate(summary, 300)}"]
-        description_lines.append(f"**Status:** {status_value}")
         if payload.num_comments is not None:
             description_lines.append(f"**Comments:** {payload.num_comments}")
         if link_line:
@@ -415,11 +418,9 @@ def build_report_embed(payload: ReportViewPayload, *, has_card: bool = False) ->
             description_lines.append(f"**Text:** {snippet_text}")
     elif has_card:
         # A rendered Reddit-style card carries the comment, its context, and
-        # the post title, so the description only needs the state that isn't
-        # visual.
-        description_lines = [f"**Status:** {status_value}"]
-        if link_line:
-            description_lines.append(link_line)
+        # the post title, so there's nothing left for the description to add
+        # beyond an optional link line.
+        description_lines = [link_line] if link_line else []
     else:
         # Fallback for when the card couldn't be rendered (e.g. fonts
         # unavailable): same text-only layout as before the image existed.
@@ -433,9 +434,8 @@ def build_report_embed(payload: ReportViewPayload, *, has_card: bool = False) ->
             )
         else:
             description_lines.append("_(comment text unavailable)_")
-        description_lines.append("")
-        description_lines.append(f"**Status:** {status_value}")
         if link_line:
+            description_lines.append("")
             description_lines.append(link_line)
 
     embed.description = "\n".join(description_lines)
@@ -478,6 +478,8 @@ def build_report_embed(payload: ReportViewPayload, *, has_card: bool = False) ->
             value=_truncate("\n".join(f"- {line}" for line in escaped_audit), 1024),
             inline=False,
         )
+
+    embed.add_field(name="Status", value=status_value, inline=False)
 
     if payload.created_utc > 0:
         embed.set_footer(text=f"Posted {_relative_age(payload.created_utc)}")
@@ -523,30 +525,19 @@ def build_report_attachment(payload: ReportViewPayload) -> discord.File | None:
 
 
 def build_report_message(payload: ReportViewPayload) -> tuple[list[discord.Embed], discord.File | None]:
-    """The embed(s) plus the optional Reddit-card attachment, built together
-    so the embed always correctly reflects whether a card is actually
-    coming.
+    """The embed plus the optional Reddit-card attachment, built together so
+    the embed always correctly reflects whether a card is actually coming.
 
-    Discord always renders a single embed's own image after its
-    description and fields, with no way to move it earlier - so there is
-    no way to put the card "inside the embed, at the top" with just one
-    embed. The closest the platform allows: two embeds in the same
-    message, stacked with the same accent color and no gap in the color
-    bar. The first carries only the title and the image - nothing renders
-    before an image within an embed that has no description or fields, so
-    it's effectively "at the top" of that card. The second carries
-    Status/fields/footer below it. Without a card, this collapses back to
-    the single embed it always was."""
+    Tried wiring the card into a second "hero" embed so it would sit inside
+    a colored border - Discord renders embeds at a narrower fixed width
+    than a plain attachment, though, so the card came out visibly smaller
+    and harder to read, and two bordered boxes with a gap between them
+    looked like two separate things rather than one card. A bare
+    attachment that no embed references renders full-width, above every
+    embed in the message: still content-first, just not framed."""
     attachment = build_report_attachment(payload)
     embed = build_report_embed(payload, has_card=attachment is not None)
-    if attachment is None:
-        return [embed], None
-
-    hero = discord.Embed(color=embed.color, title=embed.title, url=embed.url)
-    hero.set_image(url=f"attachment://{attachment.filename}")
-    embed.title = None
-    embed.url = None
-    return [hero, embed], attachment
+    return [embed], attachment
 
 
 @dataclass(frozen=True)
