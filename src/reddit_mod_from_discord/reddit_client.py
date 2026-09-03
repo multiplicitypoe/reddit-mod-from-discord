@@ -89,6 +89,17 @@ def _squash_whitespace(text: str) -> str:
     return " ".join(text.split())
 
 
+_SELF_LINK_RE = re.compile(r"\[([^\[\]()]+)\]\(\1\)")
+
+
+def _collapse_self_links(text: str) -> str:
+    """Reddit's markdown for a bare pasted link is `[URL](URL)` - link text
+    identical to the URL. We don't render markdown, so left alone that
+    shows the URL twice and is the main way a single unbroken token gets
+    long enough to overflow the card. Collapse it to just the URL."""
+    return _SELF_LINK_RE.sub(r"\1", text)
+
+
 def _squash_body_whitespace(text: str) -> str:
     """Like _squash_whitespace, but for a comment or post body rather than
     a title: keeps paragraph breaks instead of flattening every newline
@@ -96,6 +107,7 @@ def _squash_body_whitespace(text: str) -> str:
     one run-on line once rendered. Still collapses runs of spaces/tabs
     within a line, and caps blank-line runs at one, so stray formatting
     can't blow up the card's height."""
+    text = _collapse_self_links(text)
     lines = [re.sub(r"[ \t]+", " ", line).strip() for line in text.splitlines()]
     out: list[str] = []
     blank_run = 0
