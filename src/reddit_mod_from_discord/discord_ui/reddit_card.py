@@ -197,7 +197,7 @@ def _render_comment(payload: ReportViewPayload) -> bytes:
         if payload.post_selftext:
             post_type_lines = _wrap(measure, payload.post_selftext, f_posttype, content_w)
         else:
-            post_type_lines = ["Text post — no body"]
+            post_type_lines = ["Text post, no body"]
     elif payload.post_is_self is False:
         domain = _domain(payload.link_url)
         post_type_lines = [f"Link post · {domain}" if domain else "Link post"]
@@ -231,8 +231,9 @@ def _render_comment(payload: ReportViewPayload) -> bytes:
     y += _s(20)  # gap before context/reported section, no rule line
 
     if has_parent:
-        if payload.parent_is_nested:
-            y += f_hint.size + _s(6)
+        # The nested-reply hint shares the name row instead of getting its
+        # own line above it - same principle as the eyebrow/label line in
+        # _render_submission, used wherever two short labels are adjacent.
         y += max(parent_avatar_d, f_parent_name.size + _s(4)) + _s(2)
         y += len(parent_lines) * (f_pbody.size + _s(5)) + _s(14)
 
@@ -264,17 +265,23 @@ def _render_comment(payload: ReportViewPayload) -> bytes:
     cy += _s(20)
 
     if has_parent:
-        if payload.parent_is_nested:
-            draw.text((_PAD, cy), "... replying further up — see full thread", font=f_hint, fill=_SUBTLE)
-            cy += f_hint.size + _s(6)
         row_top = cy
         _draw_avatar(draw, _PAD, row_top, parent_avatar_d, payload.parent_author or "?")
+        name_y = row_top + parent_avatar_d / 2 - f_parent_name.size / 2 - _s(2)
         draw.text(
-            (_PAD + parent_indent, row_top + parent_avatar_d / 2 - f_parent_name.size / 2 - _s(2)),
+            (_PAD + parent_indent, name_y),
             f"u/{payload.parent_author}",
             font=f_parent_name,
             fill=_MUTED,
         )
+        if payload.parent_is_nested:
+            name_w = draw.textlength(f"u/{payload.parent_author}", font=f_parent_name)
+            draw.text(
+                (_PAD + parent_indent + name_w + _s(8), name_y + _s(2)),
+                "· more context above",
+                font=f_hint,
+                fill=_SUBTLE,
+            )
         cy += max(parent_avatar_d, f_parent_name.size + _s(4)) + _s(2)
         bubble_top = cy - _s(2)
         bubble_h = len(parent_lines) * (f_pbody.size + _s(5)) + _s(10)
@@ -362,8 +369,7 @@ def _render_submission(payload: ReportViewPayload) -> bytes:
             domain = _domain(payload.link_url)
 
     y = _PAD
-    y += f_sub.size + _s(8)  # subreddit eyebrow
-    y += f_flag.size + _s(6)  # "REPORTED POST" label
+    y += max(f_sub.size, f_flag.size) + _s(8)  # subreddit + "REPORTED POST", one line
 
     box_h = box_pad
     box_h += len(title_lines) * (f_title.size + _s(4))
@@ -387,11 +393,12 @@ def _render_submission(payload: ReportViewPayload) -> bytes:
     draw.rounded_rectangle([0, 0, _WIDTH - 1, height - 1], radius=_RADIUS, outline=_CARD_BORDER, width=_SCALE)
 
     cy = _PAD
-    _draw_tracked(draw, (_PAD, cy), f"R/{payload.subreddit}".upper(), f_sub, _MUTED, tracking=1.2)
-    cy += f_sub.size + _s(8)
-
-    _draw_tracked(draw, (_PAD, cy), "REPORTED POST", f_flag, _FLAG_ACCENT, tracking=1.2)
-    cy += f_flag.size + _s(6)
+    eyebrow_x = _draw_tracked(draw, (_PAD, cy), f"R/{payload.subreddit}".upper(), f_sub, _MUTED, tracking=1.2)
+    eyebrow_x += _s(12)
+    draw.text((eyebrow_x, cy), "·", font=f_sub, fill=_SUBTLE)
+    eyebrow_x += draw.textlength("·", font=f_sub) + _s(12)
+    _draw_tracked(draw, (eyebrow_x, cy), "REPORTED POST", f_flag, _FLAG_ACCENT, tracking=1.2)
+    cy += max(f_sub.size, f_flag.size) + _s(8)
 
     box_top = cy
     draw.rounded_rectangle(
