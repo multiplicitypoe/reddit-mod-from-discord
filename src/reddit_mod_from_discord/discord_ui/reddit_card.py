@@ -374,9 +374,8 @@ def _render_submission(payload: ReportViewPayload) -> bytes:
     elif is_link:
         box_h += f_body.size + _s(4)
         box_h += _s(4)
-    if payload.num_comments is not None:
-        box_h += _s(10)
-        box_h += f_stats.size
+    box_h += _s(10)
+    box_h += f_stats.size
     box_h += box_pad
 
     y += box_h
@@ -418,9 +417,11 @@ def _render_submission(payload: ReportViewPayload) -> bytes:
         ty += f_body.size + _s(4)
         ty += _s(4)
 
+    ty += _s(10)
+    stats = f"u/{payload.author or '[deleted]'}"
     if payload.num_comments is not None:
-        ty += _s(10)
-        draw.text((text_x, ty), f"{payload.num_comments} comments", font=f_stats, fill=_MUTED)
+        stats += f" · {payload.num_comments} comments"
+    draw.text((text_x, ty), stats, font=f_stats, fill=_MUTED)
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
