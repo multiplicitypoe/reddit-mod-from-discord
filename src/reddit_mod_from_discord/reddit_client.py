@@ -89,6 +89,26 @@ def _squash_whitespace(text: str) -> str:
     return " ".join(text.split())
 
 
+def _squash_body_whitespace(text: str) -> str:
+    """Like _squash_whitespace, but for a comment or post body rather than
+    a title: keeps paragraph breaks instead of flattening every newline
+    into a space, which turned markdown paragraphs and bullet lists into
+    one run-on line once rendered. Still collapses runs of spaces/tabs
+    within a line, and caps blank-line runs at one, so stray formatting
+    can't blow up the card's height."""
+    lines = [re.sub(r"[ \t]+", " ", line).strip() for line in text.splitlines()]
+    out: list[str] = []
+    blank_run = 0
+    for line in lines:
+        if line:
+            blank_run = 0
+            out.append(line)
+        elif blank_run == 0:
+            blank_run += 1
+            out.append("")
+    return "\n".join(out).strip()
+
+
 def _truncate(text: str, max_len: int) -> str:
     if len(text) <= max_len:
         return text
@@ -261,7 +281,7 @@ class RedditService:
             return None, None, False
         parent_author_obj = getattr(parent, "author", None)
         parent_author = getattr(parent_author_obj, "name", "[deleted]") if parent_author_obj else "[deleted]"
-        parent_body = _truncate(_squash_whitespace(getattr(parent, "body", "") or ""), 300)
+        parent_body = _truncate(_squash_body_whitespace(getattr(parent, "body", "") or ""), 300)
         parent_is_nested = str(getattr(parent, "parent_id", "")).startswith("t1_")
         return parent_author, parent_body, parent_is_nested
 
@@ -291,7 +311,7 @@ class RedditService:
             extras["post_is_self"] = is_self
             if is_self:
                 extras["post_selftext"] = _truncate(
-                    _squash_whitespace(getattr(submission, "selftext", "") or ""), 300
+                    _squash_body_whitespace(getattr(submission, "selftext", "") or ""), 300
                 )
             else:
                 # A self post's own `.url` is just its own permalink, not
@@ -367,7 +387,7 @@ class RedditService:
                     # effectively "never truncate a real title" rather than
                     # an actual limit.
                     title=_truncate(_squash_whitespace(title), 300),
-                    snippet=_truncate(_squash_whitespace(snippet), 800),
+                    snippet=_truncate(_squash_body_whitespace(snippet), 800),
                     num_reports=num_reports,
                     created_utc=created_utc,
                     num_comments=num_comments,
