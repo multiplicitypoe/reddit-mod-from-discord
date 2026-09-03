@@ -440,12 +440,19 @@ def build_report_embed(payload: ReportViewPayload, *, has_card: bool = False) ->
 
     embed.description = "\n".join(description_lines)
 
-    if not has_card:
+    # A reported post that links to an image gets the real image here,
+    # via Discord fetching the URL itself - not baked into the rendered
+    # card, which stays text-only and never makes an outbound fetch of its
+    # own. Comments don't carry their own media, so this only ever fires
+    # for submissions in practice; still gated by kind so it stays that
+    # way on purpose, not by accident.
+    if not has_card or payload.kind == "submission":
         if safe_media_url:
             embed.set_image(url=safe_media_url)
         elif safe_thumbnail_url:
             embed.set_thumbnail(url=safe_thumbnail_url)
 
+    if not has_card:
         if payload.kind != "submission":
             embed.add_field(
                 name="Reported comment on",
