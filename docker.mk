@@ -10,7 +10,7 @@
 #   TAG          image tag            (default: latest)
 #   RUN_ARGS     extra `docker run` arguments: mounts, env-file, limits
 #   PRE_RUN      a shell command to run just before the container starts
-#   DATA_DIR     directory to create before running, if the bot needs one
+#   DATA_DIR     directories to create before running, space separated
 #   ENV_HINT     extra words for the "edit .env" message, e.g. which keys.
 #                Give it bare text, no quotes: it is interpolated inside a
 #                double quoted shell string.
@@ -68,7 +68,7 @@ print-container:
 
 # Only projects that keep state on disk declare a DATA_DIR.
 ensure-data:
-	@if [ -n "$(DATA_DIR)" ]; then mkdir -p "$(DATA_DIR)"; fi
+	@if [ -n "$(DATA_DIR)" ]; then mkdir -p $(DATA_DIR); fi
 
 # Only projects that ship a .env.example need a .env.
 ensure-env:
