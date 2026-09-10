@@ -1,4 +1,4 @@
-.PHONY: ensure-venv install run-bot demo-mode test-reddit test-discord test-discord-post test-discord-comment reddit-token clear-history ensure-data ensure-env build-docker stop-docker run-docker docker run-docker-bot help
+# reddit-mod-from-discord: mirrors subreddit mod activity into Discord.
 
 VENV ?= .venv
 PYTHON ?= python3
@@ -6,22 +6,23 @@ PIP := $(VENV)/bin/pip
 PY := $(VENV)/bin/python
 PIP_INSTALL_FLAGS ?= --no-cache-dir --only-binary=:all:
 
-DOCKER_BIN ?= docker
-DOCKER ?= $(shell \
-	if command -v "$(DOCKER_BIN)" >/dev/null 2>&1; then \
-		if "$(DOCKER_BIN)" ps >/dev/null 2>&1; then \
-			printf '%s' "$(DOCKER_BIN)"; \
-		elif command -v sudo >/dev/null 2>&1 && sudo -n "$(DOCKER_BIN)" ps >/dev/null 2>&1; then \
-			printf '%s' "sudo -n $(DOCKER_BIN)"; \
-		else \
-			printf '%s' "$(DOCKER_BIN)"; \
-		fi; \
-	else \
-		printf '%s' "$(DOCKER_BIN)"; \
-	fi)
 IMAGE ?= reddit-mod-from-discord
-TAG ?= latest
 CONTAINER ?= reddit-mod-from-discord
+DATA_DIR ?= data
+
+RUN_ARGS = \
+	--env-file "$(CURDIR)/.env" \
+	-v "$(CURDIR)/data:/app/data"
+# Mounted only when the file is there, which is how it has always behaved.
+ifneq ($(wildcard $(CURDIR)/multi_server_config.json),)
+RUN_ARGS += -v "$(CURDIR)/multi_server_config.json:/app/multi_server_config.json:ro"
+endif
+RUN_ARGS += $(HARDENED_ARGS)
+
+include docker.mk
+
+.PHONY: help ensure-venv install run-bot demo-mode test-reddit test-discord \
+        test-discord-post test-discord-comment reddit-token clear-history
 
 help:
 	@echo "make ensure-venv - create .venv if missing"
@@ -44,14 +45,6 @@ ensure-venv:
 install: ensure-venv
 	"$(PIP)" install $(PIP_INSTALL_FLAGS) -r requirements.txt
 
-ensure-data:
-	@mkdir -p data
-
-ensure-env:
-	@test -f "$(CURDIR)/.env" || (cp "$(CURDIR)/.env.example" "$(CURDIR)/.env" && \
-		printf '%s\n' "Created .env from .env.example. Edit .env, then re-run." && \
-		exit 1)
-
 run-bot: install ensure-env
 	PYTHONPATH=src "$(PY)" -m reddit_mod_from_discord
 
@@ -60,7 +53,6 @@ demo-mode: install ensure-env
 
 test-reddit: install ensure-env
 	PYTHONPATH=src "$(PY)" -m reddit_mod_from_discord.reddit_client
-
 
 test-discord: test-discord-post
 
@@ -75,42 +67,3 @@ reddit-token: install ensure-env
 
 clear-history: install ensure-env
 	PYTHONPATH=src "$(PY)" tools/clear_setup_history.py
-
-build-docker: ensure-data
-	$(DOCKER) build -t "$(IMAGE):$(TAG)" "$(CURDIR)"
-
-stop-docker:
-	@if $(DOCKER) container inspect "$(CONTAINER)" >/dev/null 2>&1; then \
-		if [ "$$($(DOCKER) inspect -f '{{.State.Running}}' "$(CONTAINER)" 2>/dev/null)" = "true" ]; then \
-			echo "Stopping container $(CONTAINER)"; \
-			$(DOCKER) stop "$(CONTAINER)" >/dev/null; \
-		fi; \
-		echo "Removing container $(CONTAINER)"; \
-		$(DOCKER) rm "$(CONTAINER)" >/dev/null 2>&1 || true; \
-	else \
-		echo "Container $(CONTAINER) not found; nothing to stop."; \
-	fi
-
-run-docker: ensure-env ensure-data stop-docker
-	@config_mount=""; \
-	if [ -f "$(CURDIR)/multi_server_config.json" ]; then \
-		config_mount="-v $(CURDIR)/multi_server_config.json:/app/multi_server_config.json:ro"; \
-	fi; \
-	$(DOCKER) run --rm \
-		--name "$(CONTAINER)" \
-		--env-file "$(CURDIR)/.env" \
-		-v "$(CURDIR)/data:/app/data" \
-		$$config_mount \
-		--read-only \
-		--tmpfs /tmp:rw,noexec,nosuid,nodev \
-		--cap-drop ALL \
-		--security-opt no-new-privileges \
-		--pids-limit 256 \
-		--memory 512m \
-		--cpus 1.0 \
-		--user "$$(id -u):$$(id -g)" \
-		"$(IMAGE):$(TAG)"
-
-docker: build-docker run-docker
-
-run-docker-bot: run-docker
