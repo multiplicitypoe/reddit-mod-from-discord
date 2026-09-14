@@ -1337,6 +1337,25 @@ class ReportView(discord.ui.View):
         self.add_item(more)
         self._update_toggle_labels()
 
+    async def _safe_defer(self, interaction: discord.Interaction) -> None:
+        """Acknowledge the press, but don't let an already-expired interaction
+        take the whole button action down with it.
+
+        Discord invalidates an interaction 3 seconds after creating it. A
+        gateway hiccup can eat that budget before this even runs, and
+        interaction.response.defer() then raises NotFound (10062, "Unknown
+        interaction"). Every step after this call only needs the bot's own
+        token, not the interaction's, so swallow the expiry and keep going
+        rather than silently dropping the mod's click.
+        """
+        try:
+            await interaction.response.defer()
+        except (discord.NotFound, discord.HTTPException):
+            logger.warning(
+                "Interaction already expired before defer() could run; "
+                "proceeding with the action anyway"
+            )
+
     async def _ensure_mod(self, interaction: discord.Interaction) -> bool:
         member = interaction.user if isinstance(interaction.user, discord.Member) else None
         if is_allowed_moderator(member, self.allowed_role_ids):
@@ -1660,7 +1679,7 @@ class ReportView(discord.ui.View):
         #
         # A deferred update rather than a thinking reply: it acknowledges the
         # press without creating a message, so the redrawn card is the feedback.
-        await interaction.response.defer()
+        await self._safe_defer(interaction)
         total_start = time.monotonic()
         self._append_action(interaction, action_text)
         try:
