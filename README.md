@@ -2,6 +2,10 @@
 
 A Discord bot that lets a mod team moderate a subreddit without leaving Discord. Each reported post or comment shows up in the mod channel as one message, with the content, the report reasons, and buttons. Pressing a button takes the action on Reddit and updates the message to show who did it.
 
+![A reported comment as it arrives in the mod channel, and the same message after a mod pressed Remove](docs/alert.png)
+
+The card at the top of each message is the bot's own output. The rest is redrawn to look like Discord.
+
 From the message, a mod can:
 
 - Approve, remove, mark as spam, or lock the item.
