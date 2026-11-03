@@ -1,0 +1,32 @@
+{
+  "$schema": "https://developers.reddit.com/schema/config-file.v1.json",
+  "name": "pathofexile-modqueue",
+  "server": {},
+  "permissions": {
+    "reddit": {
+      "scope": "user"
+    },
+    "redis": true,
+    "http": {
+      "enable": true,
+      "domains": ["discord.com"]
+    }
+  },
+  "triggers": {
+    "onPostReport": "/internal/triggers/on-post-report",
+    "onCommentReport": "/internal/triggers/on-comment-report"
+  },
+  "settings": {
+    "global": {
+      "discordWebhook": {
+        "type": "string",
+        "label": "Discord webhook URL for report alerts",
+        "helpText": "A webhook for the mod channel where alerts should appear.",
+        "isSecret": true
+      }
+    }
+  },
+  "scripts": {
+    "dev": "npm run watch"
+  }
+}
