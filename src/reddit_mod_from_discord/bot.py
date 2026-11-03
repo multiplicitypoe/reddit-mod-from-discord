@@ -13,6 +13,7 @@ from discord import app_commands
 from dotenv import load_dotenv
 
 from reddit_mod_from_discord.config import ResolvedSettings, Settings, load_settings, resolve_settings
+from reddit_mod_from_discord.devvit_alerts import parse_alert
 from reddit_mod_from_discord.discord_ui.report_view import ReportView, build_report_message
 from reddit_mod_from_discord.logging_filters import install_discord_reconnect_log_compaction
 from reddit_mod_from_discord.models import ReportViewPayload, ReportedItem
@@ -139,6 +140,42 @@ class RedditModBot(discord.Client):
                 continue
             runtime.poll_task = asyncio.create_task(self._poll_loop(guild, runtime))
             runtime.warm_task = asyncio.create_task(self._warm_removal_reasons_loop(runtime))
+
+    async def on_message(self, message: discord.Message) -> None:
+        """Turn an alert posted by the Devvit app into this bot's own card."""
+        if message.webhook_id is None or message.guild is None or not message.embeds:
+            return
+        alert = parse_alert(embed.footer.text for embed in message.embeds)
+        if alert is None:
+            return
+        for runtime in self._get_runtimes_for_guild(message.guild.id):
+            if runtime.settings.discord_mod_channel_id != message.channel.id:
+                continue
+            await self._relay_devvit_alert(message, runtime, alert.fullname)
+            return
+
+    async def _relay_devvit_alert(
+        self, message: discord.Message, runtime: SetupRuntime, fullname: str
+    ) -> None:
+        # A poll posts the card for every reported item it has not alerted yet, so the webhook
+        # message only has to start one. It is deleted once this item's card exists, and kept if
+        # the card could not be made, so the alert is never lost.
+        guild = message.guild
+        if guild is None:
+            return
+        try:
+            await self._poll_once(guild, runtime)
+            _, card_message_id, _ = await self.store.get_alert_message(fullname, runtime.setup_id)
+        except Exception:
+            logger.exception("Could not relay the Devvit alert for %s", fullname)
+            return
+        if card_message_id is None or card_message_id == message.id:
+            logger.warning("No card was posted for the Devvit alert on %s; leaving it", fullname)
+            return
+        try:
+            await message.delete()
+        except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+            logger.warning("Could not delete the Devvit alert for %s", fullname)
 
     async def _warm_removal_reasons_loop(self, runtime: SetupRuntime) -> None:
         # Keep this out of the poll loop so a slow wiki/rules fetch doesn't block alerting.
