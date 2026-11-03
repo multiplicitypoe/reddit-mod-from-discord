@@ -14,9 +14,7 @@
   },
   "triggers": {
     "onPostReport": "/internal/triggers/on-post-report",
-    "onCommentReport": "/internal/triggers/on-comment-report",
-    "onPostDelete": "/internal/triggers/on-post-delete",
-    "onCommentDelete": "/internal/triggers/on-comment-delete"
+    "onCommentReport": "/internal/triggers/on-comment-report"
   },
   "settings": {
     "global": {
