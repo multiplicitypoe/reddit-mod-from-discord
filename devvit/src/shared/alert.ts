@@ -34,6 +34,27 @@ export function footerFor(fullname: string, subreddit: string): string {
   return `${MARKER} ${fullname} r/${subreddit}`
 }
 
+// Sent when the author deletes an item that was posted, so the bot clears its copy. It carries no content.
+export const DELETED_MARKER = `${MARKER}:deleted`
+
+export function deletedFooterFor(fullname: string, subreddit: string): string {
+  return `${DELETED_MARKER} ${fullname} r/${subreddit}`
+}
+
+export function buildDeletedNotice(fullname: string, subreddit: string, botUserId?: string) {
+  return {
+    username: 'Reddit reports',
+    ...mentionOf(botUserId),
+    embeds: [
+      {
+        title: fullname.startsWith('t3_') ? 'Post deleted by its author' : 'Comment deleted by its author',
+        color: 0x747f8d,
+        footer: {text: deletedFooterFor(fullname, subreddit)},
+      },
+    ],
+  }
+}
+
 export function parseFooter(footer: string): {fullname: string; subreddit: string} | null {
   const m = new RegExp(`^${MARKER} (t[13]_[a-z0-9]+) r/([A-Za-z0-9_]+)$`).exec(footer)
   return m ? {fullname: m[1]!, subreddit: m[2]!} : null
@@ -43,14 +64,20 @@ export function parseFooter(footer: string): {fullname: string; subreddit: strin
 // mentions the bot, so the alert mentions it when the bot's user id is configured.
 export const isUserId = (id: string) => /^\d{15,25}$/.test(id)
 
+function mentionOf(botUserId?: string) {
+  const id = botUserId && isUserId(botUserId) ? botUserId : null
+  return {
+    ...(id ? {content: `<@${id}>`} : {}),
+    allowed_mentions: id ? {users: [id]} : {parse: [] as string[]},
+  }
+}
+
 export function buildAlert(r: Reported, botUserId?: string) {
   const isPost = r.kind === 'post'
   const reports = r.totalReports > 0 ? r.totalReports : 1
-  const mention = botUserId && isUserId(botUserId) ? botUserId : null
   return {
     username: 'Reddit reports',
-    ...(mention ? {content: `<@${mention}>`} : {}),
-    allowed_mentions: mention ? {users: [mention]} : {parse: [] as string[]},
+    ...mentionOf(botUserId),
     embeds: [
       {
         title: clip(isPost ? `Reported post: ${r.title ?? '(untitled)'}` : 'Reported comment', 256),

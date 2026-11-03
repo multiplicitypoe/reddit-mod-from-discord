@@ -1,6 +1,6 @@
 import type {IncomingMessage, ServerResponse} from 'node:http'
 import {createServer, getServerPort} from '@devvit/web/server'
-import {onCommentReport, onPostReport} from './reports.ts'
+import {onCommentDelete, onCommentReport, onPostDelete, onPostReport} from './reports.ts'
 
 async function readJson(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = []
@@ -28,6 +28,16 @@ const server = createServer(async (req, res) => {
       case '/internal/triggers/on-comment-report': {
         const result = await onCommentReport((await readJson(req)) as Parameters<typeof onCommentReport>[0])
         console.log(`comment-report; result=${result}`)
+        return send(res, 200, {status: result})
+      }
+      case '/internal/triggers/on-post-delete': {
+        const result = await onPostDelete((await readJson(req)) as Parameters<typeof onPostDelete>[0])
+        console.log(`post-delete; result=${result}`)
+        return send(res, 200, {status: result})
+      }
+      case '/internal/triggers/on-comment-delete': {
+        const result = await onCommentDelete((await readJson(req)) as Parameters<typeof onCommentDelete>[0])
+        console.log(`comment-delete; result=${result}`)
         return send(res, 200, {status: result})
       }
       default:
