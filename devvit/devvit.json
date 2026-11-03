@@ -1,0 +1,37 @@
+{
+  "$schema": "https://developers.reddit.com/schema/config-file.v1.json",
+  "name": "pathofexile-modqueue",
+  "server": {},
+  "permissions": {
+    "reddit": {
+      "scope": "user"
+    },
+    "redis": true,
+    "http": {
+      "enable": true,
+      "domains": ["discord.com"]
+    }
+  },
+  "triggers": {
+    "onPostReport": "/internal/triggers/on-post-report",
+    "onCommentReport": "/internal/triggers/on-comment-report"
+  },
+  "settings": {
+    "global": {
+      "discordWebhook": {
+        "type": "string",
+        "label": "Discord webhook URL for report alerts",
+        "helpText": "A webhook for the mod channel where alerts should appear.",
+        "isSecret": true
+      },
+      "discordBotUserId": {
+        "type": "string",
+        "label": "Discord user ID of the bot that reposts alerts",
+        "helpText": "The bot is mentioned in each alert so it can read the embed. Leave empty to post without a mention."
+      }
+    }
+  },
+  "scripts": {
+    "dev": "npm run watch"
+  }
+}
