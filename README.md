@@ -16,6 +16,18 @@ From the message, a mod can:
 
 The message also shows the item's status and any mod log entries for it. Buttons keep working after a restart.
 
+## Removal reasons
+
+Removal reasons come from the subreddit's Toolbox removal reasons, or from the subreddit rules if it has none. Choose More actions, then Removal reason…, and pick one from the list.
+
+![The removal reason list open, showing the Toolbox reasons for the subreddit](docs/removal-reasons.png)
+
+Pressing Send on a post opens a form with the reason already written out, using the Toolbox header and footer. Edit anything before you submit. Submitting removes the post and sends the message as the subreddit. On a comment, Send opens the Reply form instead, with the reason text filled in.
+
+![The Removal Message form, filled in from the selected Toolbox reason](docs/removal-form.png)
+
+The message text is the bot's own output from a sample Toolbox config. The Discord layout around it is redrawn.
+
 ## Setup
 
 You need Python 3, a Discord bot token, and a Reddit app.
