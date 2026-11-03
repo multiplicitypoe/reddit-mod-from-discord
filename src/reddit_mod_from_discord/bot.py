@@ -148,8 +148,12 @@ class RedditModBot(discord.Client):
         alert = parse_alert(embed.footer.text for embed in message.embeds)
         if alert is None:
             return
+        # Several subreddits can share one mod channel, so the footer's subreddit picks the setup.
         for runtime in self._get_runtimes_for_guild(message.guild.id):
             if runtime.settings.discord_mod_channel_id != message.channel.id:
+                continue
+            configured = (runtime.settings.reddit_subreddit or "").casefold()
+            if configured and configured != alert.subreddit.casefold():
                 continue
             await self._relay_devvit_alert(message, runtime, alert.fullname)
             return
