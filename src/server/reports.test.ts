@@ -4,7 +4,7 @@ import {type Deps, onCommentReport, onPostReport} from './reports.ts'
 
 const HOOK = 'https://discord.com/api/webhooks/123456/token'
 
-function fakes(opts: {url?: string | undefined; responses?: Array<{status: number; retryAfterS?: number} | Error>} = {}) {
+function fakes(opts: {url?: string | undefined; botId?: string; responses?: Array<{status: number; retryAfterS?: number} | Error>} = {}) {
   const kv = new Map<string, number>()
   const sent: unknown[] = []
   const responses = [...(opts.responses ?? [])]
@@ -16,6 +16,7 @@ function fakes(opts: {url?: string | undefined; responses?: Array<{status: numbe
       expire: async () => {},
     },
     webhookUrl: async () => ('url' in opts ? opts.url : HOOK),
+    botUserId: async () => opts.botId,
     userName: async id => (id === 't2_u1' ? 'Carol_Example' : null),
     send: async (_url, body) => {
       const next = responses.shift() ?? {status: 204}
@@ -81,4 +82,12 @@ test('a network error releases the item and an empty event is ignored', async ()
   assert.equal(await onPostReport(post(), f.deps), 'failed')
   assert.equal(f.kv.size, 0)
   assert.equal(await onPostReport({reason: 'x'}, f.deps), 'ignored')
+})
+
+test('the alert mentions the configured bot so it can read the embed, and nobody else', async () => {
+  const f = fakes({botId: '123456789012345678'})
+  await onPostReport(post(), f.deps)
+  const body = f.sent[0] as {content?: string; allowed_mentions: unknown}
+  assert.equal(body.content, '<@123456789012345678>')
+  assert.deepEqual(body.allowed_mentions, {users: ['123456789012345678']})
 })

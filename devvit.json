@@ -23,6 +23,11 @@
         "label": "Discord webhook URL for report alerts",
         "helpText": "A webhook for the mod channel where alerts should appear.",
         "isSecret": true
+      },
+      "discordBotUserId": {
+        "type": "string",
+        "label": "Discord user ID of the bot that reposts alerts",
+        "helpText": "The bot is mentioned in each alert so it can read the embed. Leave empty to post without a mention."
       }
     }
   },

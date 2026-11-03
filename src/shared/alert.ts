@@ -39,12 +39,18 @@ export function parseFooter(footer: string): {fullname: string; subreddit: strin
   return m ? {fullname: m[1]!, subreddit: m[2]!} : null
 }
 
-export function buildAlert(r: Reported) {
+// A bot without the Message Content intent sees a webhook message's embed only if the message
+// mentions the bot, so the alert mentions it when the bot's user id is configured.
+export const isUserId = (id: string) => /^\d{15,25}$/.test(id)
+
+export function buildAlert(r: Reported, botUserId?: string) {
   const isPost = r.kind === 'post'
   const reports = r.totalReports > 0 ? r.totalReports : 1
+  const mention = botUserId && isUserId(botUserId) ? botUserId : null
   return {
     username: 'Mod queue',
-    allowed_mentions: {parse: [] as string[]},
+    ...(mention ? {content: `<@${mention}>`} : {}),
+    allowed_mentions: mention ? {users: [mention]} : {parse: [] as string[]},
     embeds: [
       {
         title: clip(isPost ? `Reported post: ${r.title ?? '(untitled)'}` : 'Reported comment', 256),

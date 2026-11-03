@@ -46,3 +46,9 @@ test('only real Discord webhook URLs are accepted', () => {
   assert.equal(isDiscordWebhook('http://discord.com/api/webhooks/123456/abc'), false)
   assert.equal(isDiscordWebhook('https://discord.com/api/webhooks/123456/abc?x=1'), false)
 })
+
+test('no bot id, or one that is not an id, means no mention at all', () => {
+  assert.equal('content' in buildAlert(base), false)
+  assert.equal('content' in buildAlert(base, '@everyone'), false)
+  assert.deepEqual(buildAlert(base, '@everyone').allowed_mentions, {parse: []})
+})

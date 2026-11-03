@@ -8,6 +8,7 @@ export type Deps = {
     expire(key: string, seconds: number): Promise<unknown>
   }
   webhookUrl(): Promise<string | undefined>
+  botUserId(): Promise<string | undefined>
   userName(userId: string): Promise<string | null>
   send(url: string, body: unknown): Promise<{status: number; retryAfterS?: number}>
   sleep(ms: number): Promise<void>
@@ -19,6 +20,7 @@ const alertKey = (fullname: string) => `alerted:${fullname}`
 const realDeps: Deps = {
   redis: realRedis as unknown as Deps['redis'],
   webhookUrl: () => settings.get<string>('discordWebhook'),
+  botUserId: () => settings.get<string>('discordBotUserId'),
   async userName(userId) {
     try {
       return (await realReddit.getUserById(userId as `t2_${string}`))?.username ?? null
@@ -52,7 +54,7 @@ export async function alertOnce(r: Reported, deps: Deps = realDeps): Promise<'se
   if ((await deps.redis.incrBy(key, 1)) !== 1) return 'duplicate'
   await deps.redis.expire(key, ALERT_TTL_S)
 
-  const body = buildAlert({...r, author: r.author})
+  const body = buildAlert({...r, author: r.author}, await deps.botUserId())
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const res = await deps.send(url, body)
