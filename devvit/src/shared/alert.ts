@@ -48,7 +48,7 @@ export function buildAlert(r: Reported, botUserId?: string) {
   const reports = r.totalReports > 0 ? r.totalReports : 1
   const mention = botUserId && isUserId(botUserId) ? botUserId : null
   return {
-    username: 'Mod queue',
+    username: 'Reddit reports',
     ...(mention ? {content: `<@${mention}>`} : {}),
     allowed_mentions: mention ? {users: [mention]} : {parse: [] as string[]},
     embeds: [

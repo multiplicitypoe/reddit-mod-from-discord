@@ -20,14 +20,14 @@
     "global": {
       "discordWebhook": {
         "type": "string",
-        "label": "Discord webhook URL for report alerts",
-        "helpText": "A webhook for the mod channel where alerts should appear.",
+        "label": "Discord webhook URL of the mod channel",
+        "helpText": "Each reported post or comment is posted here once, for the Reddit Mod from Discord bot to pick up.",
         "isSecret": true
       },
       "discordBotUserId": {
         "type": "string",
-        "label": "Discord user ID of the bot that reposts alerts",
-        "helpText": "The bot is mentioned in each alert so it can read the embed. Leave empty to post without a mention."
+        "label": "Discord user ID of the Reddit Mod from Discord bot",
+        "helpText": "Each message mentions the bot, which lets it read the message without the Message Content intent. Leave empty to post without a mention."
       }
     }
   },
