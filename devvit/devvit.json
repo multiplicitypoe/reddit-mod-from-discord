@@ -9,7 +9,9 @@
     "redis": true,
     "http": {
       "enable": true,
-      "domains": ["discord.com"]
+      "domains": [
+        "discord.com"
+      ]
     }
   },
   "triggers": {
@@ -28,6 +30,20 @@
         "type": "string",
         "label": "Discord user ID of the Reddit Mod from Discord bot",
         "helpText": "Each message mentions the bot, which lets it read the message without the Message Content intent. Leave empty to post without a mention."
+      }
+    },
+    "subreddit": {
+      "postReportThreshold": {
+        "type": "number",
+        "label": "Reports before a post is sent",
+        "helpText": "Use the same number as the Discord bot's post report threshold.",
+        "defaultValue": 3
+      },
+      "commentReportThreshold": {
+        "type": "number",
+        "label": "Reports before a comment is sent",
+        "helpText": "Use the same number as the Discord bot's comment report threshold.",
+        "defaultValue": 5
       }
     }
   },

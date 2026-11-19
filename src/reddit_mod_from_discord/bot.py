@@ -97,6 +97,9 @@ class SetupRuntime:
     modlog_disabled: bool = False
 
 
+DEVVIT_RELAY_RETRY_DELAYS_S = (0, 15, 30, 60)
+
+
 class RedditModBot(discord.Client):
     def __init__(self, settings: Settings) -> None:
         intents = discord.Intents.default()
@@ -161,21 +164,26 @@ class RedditModBot(discord.Client):
     async def _relay_devvit_alert(
         self, message: discord.Message, runtime: SetupRuntime, fullname: str
     ) -> None:
-        # A poll posts the card for every reported item it has not alerted yet, so the webhook
-        # message only has to start one. It is deleted once this item's card exists, and kept if
-        # the card could not be made, so the alert is never lost.
+        # The webhook message only starts a poll: the poll posts the item's card with buttons.
+        # Reddit's report listing can lag the report, so the poll is retried a few times. The
+        # webhook message is removed either way, so mods only ever see cards. If no card was made
+        # in time, the regular poll still makes one once the item meets the report threshold.
         guild = message.guild
         if guild is None:
             return
-        try:
-            await self._poll_once(guild, runtime)
-            _, card_message_id, _ = await self.store.get_alert_message(fullname, runtime.setup_id)
-        except Exception:
-            logger.exception("Could not relay the Devvit alert for %s", fullname)
-            return
-        if card_message_id is None or card_message_id == message.id:
-            logger.warning("No card was posted for the Devvit alert on %s; leaving it", fullname)
-            return
+        card_message_id = None
+        for delay in DEVVIT_RELAY_RETRY_DELAYS_S:
+            if delay:
+                await asyncio.sleep(delay)
+            try:
+                await self._poll_once(guild, runtime)
+                _, card_message_id, _ = await self.store.get_alert_message(fullname, runtime.setup_id)
+            except Exception:
+                logger.exception("Could not relay the Devvit alert for %s", fullname)
+            if card_message_id is not None and card_message_id != message.id:
+                break
+        else:
+            logger.warning("No card yet for the Devvit alert on %s; removing it, the regular poll will pick it up", fullname)
         try:
             await self._delete_webhook_message(message)
         except (discord.Forbidden, discord.NotFound, discord.HTTPException):

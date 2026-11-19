@@ -4,7 +4,7 @@ import {type Deps, onCommentReport, onPostReport} from './reports.ts'
 
 const HOOK = 'https://discord.com/api/webhooks/123456/token'
 
-function fakes(opts: {url?: string | undefined; botId?: string; responses?: Array<{status: number; retryAfterS?: number} | Error>} = {}) {
+function fakes(opts: {url?: string | undefined; botId?: string; responses?: Array<{status: number; retryAfterS?: number} | Error>; thresholds?: {post: number; comment: number}} = {}) {
   const kv = new Map<string, number>()
   const sent: unknown[] = []
   const responses = [...(opts.responses ?? [])]
@@ -16,6 +16,7 @@ function fakes(opts: {url?: string | undefined; botId?: string; responses?: Arra
       expire: async () => {},
     },
     webhookUrl: async () => ('url' in opts ? opts.url : HOOK),
+    thresholds: async () => opts.thresholds ?? {post: 1, comment: 1},
     botUserId: async () => opts.botId,
     userName: async id => (id === 't2_u1' ? 'Carol_Example' : null),
     send: async (_url, body) => {
@@ -65,7 +66,7 @@ test('no webhook, or one that is not Discord, sends nothing and does not use up 
 test('a failed send releases the item so a later report can alert again', async () => {
   const f = fakes({responses: [{status: 500}]})
   assert.equal(await onPostReport(post(), f.deps), 'failed')
-  assert.equal(f.kv.size, 0)
+  assert.equal(f.kv.has('alerted:t3_p1'), false)
   assert.equal(await onPostReport(post(), f.deps), 'sent')
 })
 
@@ -80,7 +81,7 @@ test('a rate limit is waited out once, and a long one gives up', async () => {
 test('a network error releases the item and an empty event is ignored', async () => {
   const f = fakes({responses: [new Error('network'), new Error('network')]})
   assert.equal(await onPostReport(post(), f.deps), 'failed')
-  assert.equal(f.kv.size, 0)
+  assert.equal(f.kv.has('alerted:t3_p1'), false)
   assert.equal(await onPostReport({reason: 'x'}, f.deps), 'ignored')
 })
 
@@ -90,4 +91,24 @@ test('the alert mentions the configured bot so it can read the embed, and nobody
   const body = f.sent[0] as {content?: string; allowed_mentions: unknown}
   assert.equal(body.content, '<@123456789012345678>')
   assert.deepEqual(body.allowed_mentions, {users: ['123456789012345678']})
+})
+
+test('nothing is sent until an item reaches the report threshold', async () => {
+  const {deps, sent} = fakes({thresholds: {post: 3, comment: 5}})
+  assert.equal(await onPostReport(post(), deps), 'below-threshold')
+  assert.equal(await onPostReport(post(), deps), 'below-threshold')
+  assert.equal(await onPostReport(post(), deps), 'sent')
+  assert.equal(await onPostReport(post(), deps), 'duplicate')
+  assert.equal(sent.length, 1)
+})
+
+test("Reddit's own report count counts toward the threshold", async () => {
+  const {deps, sent} = fakes({thresholds: {post: 3, comment: 5}})
+  const p = post()
+  p.post.numReports = 3
+  assert.equal(await onPostReport(p, deps), 'sent')
+  const c = comment()
+  c.comment.numReports = 4
+  assert.equal(await onCommentReport(c, deps), 'below-threshold')
+  assert.equal(sent.length, 1)
 })

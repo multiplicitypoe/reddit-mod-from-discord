@@ -8,6 +8,8 @@ export type Deps = {
     expire(key: string, seconds: number): Promise<unknown>
   }
   webhookUrl(): Promise<string | undefined>
+  // Reports an item needs before it's sent, the same numbers the Discord bot uses to make a card.
+  thresholds(): Promise<{post: number; comment: number}>
   botUserId(): Promise<string | undefined>
   userName(userId: string): Promise<string | null>
   send(url: string, body: unknown): Promise<{status: number; retryAfterS?: number}>
@@ -16,10 +18,21 @@ export type Deps = {
 
 const ALERT_TTL_S = 30 * 24 * 60 * 60
 const alertKey = (fullname: string) => `alerted:${fullname}`
+const countKey = (fullname: string) => `reports:${fullname}`
+const asCount = (v: unknown, fallback: number) => {
+  const n = Math.floor(Number(v))
+  return Number.isFinite(n) && n >= 1 ? n : fallback
+}
 
 const realDeps: Deps = {
   redis: realRedis as unknown as Deps['redis'],
   webhookUrl: () => settings.get<string>('discordWebhook'),
+  async thresholds() {
+    return {
+      post: asCount(await settings.get('postReportThreshold'), 3),
+      comment: asCount(await settings.get('commentReportThreshold'), 5),
+    }
+  },
   botUserId: () => settings.get<string>('discordBotUserId'),
   async userName(userId) {
     try {
@@ -45,9 +58,18 @@ const realDeps: Deps = {
 }
 
 // One alert per reported item. Returns what happened, for the log.
-export async function alertOnce(r: Reported, deps: Deps = realDeps): Promise<'sent' | 'duplicate' | 'no-webhook' | 'failed'> {
+export async function alertOnce(r: Reported, deps: Deps = realDeps): Promise<'sent' | 'duplicate' | 'no-webhook' | 'failed' | 'below-threshold'> {
   const url = await deps.webhookUrl()
   if (!url || !isDiscordWebhook(url)) return 'no-webhook'
+
+  // Below the threshold the Discord bot makes no card, so nothing is sent. Reddit's count can lag
+  // the report that triggered this, so the app also counts the reports it has seen.
+  const seen = await deps.redis.incrBy(countKey(r.fullname), 1)
+  await deps.redis.expire(countKey(r.fullname), ALERT_TTL_S)
+  const reports = Math.max(r.totalReports || 0, seen)
+  const t = await deps.thresholds()
+  if (reports < (r.kind === 'post' ? t.post : t.comment)) return 'below-threshold'
+  r = {...r, totalReports: reports}
 
   // incrBy is atomic: whoever gets 1 owns this item's alert. The key is released if sending fails.
   const key = alertKey(r.fullname)

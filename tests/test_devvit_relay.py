@@ -32,17 +32,33 @@ def test_the_webhook_message_is_deleted_once_the_card_exists():
     message.delete.assert_awaited_once()
 
 
-def test_the_webhook_message_stays_when_no_card_was_made():
+def _no_wait(monkeypatch):
+    import reddit_mod_from_discord.bot as botmod
+    monkeypatch.setattr(botmod.asyncio, "sleep", AsyncMock())
+
+
+def test_the_poll_is_retried_until_the_card_exists(monkeypatch):
+    _no_wait(monkeypatch)
+    bot, message = _bot(card_message_id=None), _message()
+    bot.store.get_alert_message = AsyncMock(side_effect=[(None, None, False), (10, 900, False)])
+    _relay(bot, message)
+    assert bot._poll_once.await_count == 2
+    message.delete.assert_awaited_once()
+
+
+def test_the_webhook_message_is_removed_even_when_no_card_was_made(monkeypatch):
+    _no_wait(monkeypatch)
     bot, message = _bot(card_message_id=None), _message()
     _relay(bot, message)
-    message.delete.assert_not_awaited()
+    message.delete.assert_awaited_once()
 
 
-def test_the_webhook_message_stays_when_polling_fails():
+def test_the_webhook_message_is_removed_when_polling_fails(monkeypatch):
+    _no_wait(monkeypatch)
     bot, message = _bot(card_message_id=900), _message()
     bot._poll_once = AsyncMock(side_effect=RuntimeError("reddit is down"))
     _relay(bot, message)
-    message.delete.assert_not_awaited()
+    message.delete.assert_awaited_once()
 
 
 def _runtime(setup_id, subreddit, channel_id=1):
