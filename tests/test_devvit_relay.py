@@ -78,3 +78,15 @@ def test_an_alert_for_another_channel_or_subreddit_is_left_alone():
     asyncio.run(bot.on_message(_incoming("examplesub", channel_id=2)))
     asyncio.run(bot.on_message(_incoming("elsewhere", channel_id=1)))
     bot._relay_devvit_alert.assert_not_awaited()
+
+
+def test_a_known_webhook_deletes_its_own_message(monkeypatch):
+    import discord
+    bot, message = _bot(card_message_id=900), _message()
+    message.webhook_id = 123
+    bot.settings = SimpleNamespace(devvit_webhook_urls=("https://discord.com/api/webhooks/123/tok",))
+    fake = SimpleNamespace(id=123, delete_message=AsyncMock())
+    monkeypatch.setattr(discord.Webhook, "from_url", lambda url, client=None: fake)
+    _relay(bot, message)
+    fake.delete_message.assert_awaited_once_with(500)
+    message.delete.assert_not_awaited()

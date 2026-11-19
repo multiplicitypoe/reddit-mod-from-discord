@@ -37,6 +37,9 @@ class Settings:
     debug_logs: bool
     multi_server_config_path: str | None
     multi_server_config: dict[str, "SetupConfig"]
+    # Webhooks the Devvit app posts reports through. The bot deletes their messages with the
+    # webhook's own token, so it needs no Manage Messages permission.
+    devvit_webhook_urls: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -468,4 +471,7 @@ def load_settings() -> Settings:
         debug_logs=_env_bool("DEBUG_LOGS", False),
         multi_server_config_path=multi_server_config_path,
         multi_server_config=multi_server_config,
+        devvit_webhook_urls=tuple(
+            u.strip() for u in (_env_optional("DEVVIT_WEBHOOK_URLS") or "").split(",") if u.strip()
+        ),
     )

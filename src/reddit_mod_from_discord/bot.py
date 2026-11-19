@@ -177,9 +177,20 @@ class RedditModBot(discord.Client):
             logger.warning("No card was posted for the Devvit alert on %s; leaving it", fullname)
             return
         try:
-            await message.delete()
+            await self._delete_webhook_message(message)
         except (discord.Forbidden, discord.NotFound, discord.HTTPException):
             logger.warning("Could not delete the Devvit alert for %s", fullname)
+
+    async def _delete_webhook_message(self, message: discord.Message) -> None:
+        # A webhook can delete its own messages with its token, so the bot only needs
+        # Manage Messages when the webhook isn't one it was given.
+        settings = getattr(self, "settings", None)
+        for url in getattr(settings, "devvit_webhook_urls", ()):
+            webhook = discord.Webhook.from_url(url, client=self)
+            if webhook.id == getattr(message, "webhook_id", None):
+                await webhook.delete_message(message.id)
+                return
+        await message.delete()
 
     async def _warm_removal_reasons_loop(self, runtime: SetupRuntime) -> None:
         # Keep this out of the poll loop so a slow wiki/rules fetch doesn't block alerting.
