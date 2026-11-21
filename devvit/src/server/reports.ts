@@ -10,6 +10,8 @@ export type Deps = {
   webhookUrl(): Promise<string | undefined>
   // Reports an item needs before it's sent, the same numbers the Discord bot uses to make a card.
   thresholds(): Promise<{post: number; comment: number}>
+  // Reddit's current report count for the item, the number the Discord bot checks.
+  currentReports(fullname: string): Promise<number | null>
   botUserId(): Promise<string | undefined>
   userName(userId: string): Promise<string | null>
   send(url: string, body: unknown): Promise<{status: number; retryAfterS?: number}>
@@ -18,7 +20,6 @@ export type Deps = {
 
 const ALERT_TTL_S = 30 * 24 * 60 * 60
 const alertKey = (fullname: string) => `alerted:${fullname}`
-const countKey = (fullname: string) => `reports:${fullname}`
 const asCount = (v: unknown, fallback: number) => {
   const n = Math.floor(Number(v))
   return Number.isFinite(n) && n >= 1 ? n : fallback
@@ -31,6 +32,14 @@ const realDeps: Deps = {
     return {
       post: asCount(await settings.get('postReportThreshold'), 3),
       comment: asCount(await settings.get('commentReportThreshold'), 5),
+    }
+  },
+  async currentReports(fullname) {
+    try {
+      if (fullname.startsWith('t3_')) return (await realReddit.getPostById(fullname as `t3_${string}`)).numberOfReports
+      return (await realReddit.getCommentById(fullname as `t1_${string}`)).numReports
+    } catch {
+      return null
     }
   },
   botUserId: () => settings.get<string>('discordBotUserId'),
@@ -62,11 +71,11 @@ export async function alertOnce(r: Reported, deps: Deps = realDeps): Promise<'se
   const url = await deps.webhookUrl()
   if (!url || !isDiscordWebhook(url)) return 'no-webhook'
 
-  // Below the threshold the Discord bot makes no card, so nothing is sent. Reddit's count can lag
-  // the report that triggered this, so the app also counts the reports it has seen.
-  const seen = await deps.redis.incrBy(countKey(r.fullname), 1)
-  await deps.redis.expire(countKey(r.fullname), ALERT_TTL_S)
-  const reports = Math.max(r.totalReports || 0, seen)
+  // Below the threshold the Discord bot makes no card, so nothing is sent. The count is Reddit's,
+  // the same one the bot checks: counting trigger events overcounts repeat reports, and a message
+  // sent too early sits in Discord without buttons until the bot removes it. If Reddit's count
+  // lags, the bot's own poll makes the card a minute or two later.
+  const reports = Math.max(r.totalReports || 0, (await deps.currentReports(r.fullname)) ?? 0)
   const t = await deps.thresholds()
   if (reports < (r.kind === 'post' ? t.post : t.comment)) return 'below-threshold'
   r = {...r, totalReports: reports}

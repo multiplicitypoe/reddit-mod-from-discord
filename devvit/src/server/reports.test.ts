@@ -4,7 +4,7 @@ import {type Deps, onCommentReport, onPostReport} from './reports.ts'
 
 const HOOK = 'https://discord.com/api/webhooks/123456/token'
 
-function fakes(opts: {url?: string | undefined; botId?: string; responses?: Array<{status: number; retryAfterS?: number} | Error>; thresholds?: {post: number; comment: number}} = {}) {
+function fakes(opts: {url?: string | undefined; botId?: string; responses?: Array<{status: number; retryAfterS?: number} | Error>; thresholds?: {post: number; comment: number}; current?: Map<string, number>} = {}) {
   const kv = new Map<string, number>()
   const sent: unknown[] = []
   const responses = [...(opts.responses ?? [])]
@@ -17,6 +17,7 @@ function fakes(opts: {url?: string | undefined; botId?: string; responses?: Arra
     },
     webhookUrl: async () => ('url' in opts ? opts.url : HOOK),
     thresholds: async () => opts.thresholds ?? {post: 1, comment: 1},
+    currentReports: async fullname => opts.current?.get(fullname) ?? null,
     botUserId: async () => opts.botId,
     userName: async id => (id === 't2_u1' ? 'Carol_Example' : null),
     send: async (_url, body) => {
@@ -93,13 +94,22 @@ test('the alert mentions the configured bot so it can read the embed, and nobody
   assert.deepEqual(body.allowed_mentions, {users: ['123456789012345678']})
 })
 
-test('nothing is sent until an item reaches the report threshold', async () => {
-  const {deps, sent} = fakes({thresholds: {post: 3, comment: 5}})
+test('nothing is sent until Reddit counts enough reports', async () => {
+  const current = new Map([['t3_p1', 1]])
+  const {deps, sent} = fakes({thresholds: {post: 3, comment: 5}, current})
   assert.equal(await onPostReport(post(), deps), 'below-threshold')
+  current.set('t3_p1', 2)
   assert.equal(await onPostReport(post(), deps), 'below-threshold')
+  current.set('t3_p1', 3)
   assert.equal(await onPostReport(post(), deps), 'sent')
   assert.equal(await onPostReport(post(), deps), 'duplicate')
   assert.equal(sent.length, 1)
+})
+
+test('repeat triggers for the same reports are not counted as new reports', async () => {
+  const {deps, sent} = fakes({thresholds: {post: 3, comment: 5}, current: new Map([['t3_p1', 2]])})
+  for (let i = 0; i < 4; i++) assert.equal(await onPostReport(post(), deps), 'below-threshold')
+  assert.equal(sent.length, 0)
 })
 
 test("Reddit's own report count counts toward the threshold", async () => {
